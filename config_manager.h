@@ -1,0 +1,92 @@
+#ifndef CONFIG_MANAGER_H
+#define CONFIG_MANAGER_H
+
+#include <Preferences.h>
+#include "config.h"
+
+// ---- Runtime configuration (Configuration Manager) ----
+// Loaded from NVS at boot (see load_config_from_nvs()); "config"/"setconfig"/
+// "resetconfig" serial commands read and modify these live, no reflash needed.
+uint32_t g_cycle_time_s        = DEFAULT_CYCLE_TIME_S;
+uint32_t g_inspection_window_s = DEFAULT_INSPECTION_WINDOW_S;
+uint8_t  g_cavity_count        = DEFAULT_CAVITY_COUNT;
+uint8_t  g_shift_a_hour        = DEFAULT_SHIFT_A_START_HOUR;
+uint8_t  g_shift_b_hour        = DEFAULT_SHIFT_B_START_HOUR;
+Preferences cfg_prefs;
+// --------------------------------------------------------------------------
+
+void load_config_from_nvs()
+{
+    g_cycle_time_s        = cfg_prefs.getUInt("cycle_s", DEFAULT_CYCLE_TIME_S);
+    g_inspection_window_s = cfg_prefs.getUInt("insp_s", DEFAULT_INSPECTION_WINDOW_S);
+    g_cavity_count        = (uint8_t)cfg_prefs.getUInt("cavity", DEFAULT_CAVITY_COUNT);
+    g_shift_a_hour        = (uint8_t)cfg_prefs.getUInt("shift_a", DEFAULT_SHIFT_A_START_HOUR);
+    g_shift_b_hour        = (uint8_t)cfg_prefs.getUInt("shift_b", DEFAULT_SHIFT_B_START_HOUR);
+}
+
+void print_config()
+{
+    Serial.println("---- Configuration ----");
+    Serial.print("  cycletime   = "); Serial.print(g_cycle_time_s); Serial.println(" s");
+    Serial.print("  inspwindow  = "); Serial.print(g_inspection_window_s); Serial.println(" s");
+    Serial.print("  cavity      = "); Serial.println(g_cavity_count);
+    Serial.print("  shift_a     = "); Serial.println(g_shift_a_hour);
+    Serial.print("  shift_b     = "); Serial.println(g_shift_b_hour);
+    Serial.println("------------------------");
+}
+
+// Returns true if `key` was recognized and applied+persisted, false otherwise
+// (caller reports the error - keeps this function focused on the mapping).
+bool set_config_value(const char *key, long value)
+{
+    if (strcmp(key, "cycletime") == 0)
+    {
+        if (value <= 0) return false;
+        g_cycle_time_s = (uint32_t)value;
+        cfg_prefs.putUInt("cycle_s", g_cycle_time_s);
+        return true;
+    }
+    if (strcmp(key, "inspwindow") == 0)
+    {
+        if (value <= 0) return false;
+        g_inspection_window_s = (uint32_t)value;
+        cfg_prefs.putUInt("insp_s", g_inspection_window_s);
+        return true;
+    }
+    if (strcmp(key, "cavity") == 0)
+    {
+        if (value <= 0 || value > 255) return false;
+        g_cavity_count = (uint8_t)value;
+        cfg_prefs.putUInt("cavity", g_cavity_count);
+        return true;
+    }
+    if (strcmp(key, "shift_a") == 0)
+    {
+        if (value < 0 || value > 23) return false;
+        g_shift_a_hour = (uint8_t)value;
+        cfg_prefs.putUInt("shift_a", g_shift_a_hour);
+        return true;
+    }
+    if (strcmp(key, "shift_b") == 0)
+    {
+        if (value < 0 || value > 23) return false;
+        g_shift_b_hour = (uint8_t)value;
+        cfg_prefs.putUInt("shift_b", g_shift_b_hour);
+        return true;
+    }
+
+    return false; // unknown key
+}
+
+void reset_config_to_defaults()
+{
+    cfg_prefs.clear();
+    g_cycle_time_s        = DEFAULT_CYCLE_TIME_S;
+    g_inspection_window_s = DEFAULT_INSPECTION_WINDOW_S;
+    g_cavity_count        = DEFAULT_CAVITY_COUNT;
+    g_shift_a_hour        = DEFAULT_SHIFT_A_START_HOUR;
+    g_shift_b_hour        = DEFAULT_SHIFT_B_START_HOUR;
+    Serial.println("OK - config reset to compiled-in defaults");
+}
+
+#endif
