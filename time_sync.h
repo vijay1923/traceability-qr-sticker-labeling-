@@ -36,8 +36,8 @@ void do_timesync()
     unsigned long start_ms = millis();
     while (WiFi.status() != WL_CONNECTED && (millis() - start_ms) < WIFI_CONNECT_TIMEOUT_MS)
     {
-        delay(250);
         Serial.print(".");
+        delay(250);
     }
     Serial.println();
 
