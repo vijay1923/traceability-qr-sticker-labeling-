@@ -41,7 +41,7 @@ bool ds3231_is_time_valid()
 bool ds3231_read_time(uint8_t &day, uint8_t &month, uint16_t &year, uint8_t &hour, uint8_t &minute)
 {
     if (!ds3231_is_time_valid())
-        return false;
+    return false;
 
     Wire.beginTransmission(DS3231_ADDRESS);
     Wire.write(0x00);
