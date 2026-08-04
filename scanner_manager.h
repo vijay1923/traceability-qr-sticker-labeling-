@@ -8,6 +8,8 @@ uint8_t lastConnectedState = 0;
 char extracted_data[20]; // extracted data
 char barcode_data[50];   // scanned data
 
+
+
 bool scanner_connected()
 {
     return barcode_status;
