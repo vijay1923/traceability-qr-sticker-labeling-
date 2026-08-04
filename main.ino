@@ -19,13 +19,14 @@ void setup()
 {
     Serial.begin(115200);
     Serial.println("Molding Machine : Traceability Labeling System");
+    delay(1000);
     Serial.println("Initializing Peripherals...");
     RGB_init();
     usb_scannerInit();
     set_barcode_callback(onBarcodeScanned);
     rtc_init();
     printer_init();
-    hmi_setup();
+    hmi_init();
 
     boot_millis_ref = millis();
     cfg_prefs.begin("cfg", false);
@@ -47,37 +48,16 @@ void setup()
             Serial.println(boot_minute);
             current_shift = compute_shift(boot_hour);
         }
+        hmi.Time_Stamp(boot_day, boot_month, (uint8_t)(boot_year % 100), boot_hour, boot_minute, 0);
     }
     else
     {
         Serial.println("RTC time NOT SET / lost power - printing blocked until set.");
         Serial.println("Use: settime YYYY MM DD HH MM SS   OR   wifi <ssid> <pass> then timesync");
+       
+
     }
-
-    // WiFi.mode(WIFI_OFF); // stay offline unless timesync is explicitly requested
-
-    // wifi_prefs.begin("wifi_cfg", false);
-    // String stored_ssid = wifi_prefs.getString("ssid", "");
-    // if (stored_ssid.length() == 0)
-    // {
-    //     // First boot - seed NVS with compiled-in defaults
-    //     wifi_prefs.putString("ssid", WIFI_SSID);
-    //     wifi_prefs.putString("pass", WIFI_PASS);
-    //     strncpy(wifi_ssid, WIFI_SSID, sizeof(wifi_ssid) - 1);
-    //     strncpy(wifi_pass, WIFI_PASS, sizeof(wifi_pass) - 1);
-    //     Serial.println("WiFi credentials seeded into NVS from firmware defaults");
-    // }
-    // else
-    // {
-    //     strncpy(wifi_ssid, stored_ssid.c_str(), sizeof(wifi_ssid) - 1);
-    //     String stored_pass = wifi_prefs.getString("pass", "");
-    //     strncpy(wifi_pass, stored_pass.c_str(), sizeof(wifi_pass) - 1);
-    //     Serial.print("WiFi credentials loaded from NVS, ssid: ");
-    //     Serial.println(wifi_ssid);
-    // }
-
     littlefs_mounted = LittleFS.begin(true); // true = format on mount failure
-
     if (!littlefs_mounted)
     {
         // LittleFS.begin() mounts the partition labeled "spiffs" by default
@@ -88,7 +68,7 @@ void setup()
         // setting in the Arduino IDE (or a custom partitions.csv), not a
         // code bug. Firmware continues running with stats/checkpoint
         // persistence disabled rather than getting stuck.
-        Serial.println("ERR - LittleFS mount failed (no 'spiffs'-labeled partition found, or it needs formatting).");
+        Serial.println("ERR - LittleFShmi_write_text mount failed (no 'spiffs'-labeled partition found, or it needs formatting).");
         Serial.println("      Fix: Arduino IDE -> Tools -> Partition Scheme -> pick a scheme with SPIFFS/data space, then re-upload.");
         Serial.println("      Continuing WITHOUT persistent shift stats until this is fixed.");
     }
@@ -109,7 +89,7 @@ void setup()
 
         // Attempt to recover shift-in-progress stats from the last
         // checkpoint instead of silently starting every counter at 0.
-        uint8_t ck_day, ck_month;
+        uint8_t ck_day, ck_month;  
         uint16_t ck_year;
         char ck_shift;
         uint32_t ck_ok, ck_ng;
@@ -167,14 +147,28 @@ void setup()
     {
         Serial.println("Scanner Connected");
         RGB_setColor(green); // ready
+        hmi.Write_UString((uint16_t)SCANNER_STATUS, String("Connected"));
     }
     else
     {
         Serial.println("Scanner disconnected");
         RGB_setColor(red); // not ready
+        hmi.Write_UString((uint16_t)SCANNER_STATUS, String("Disconnected"));
     }
+    printer_status_t boot_printer_status = PRINTER_STATUS_OTHER_ERROR;
+    bool boot_printer_ok = poll_printer_status(boot_printer_status);
 
-    enter_state(SYS_WAIT_FOR_START);
+    if (boot_printer_ok && boot_printer_status == PRINTER_STATUS_NORMAL)
+    {
+        Serial.println("Printer Connected");
+        hmi.Write_UString((uint16_t)PRINTER_STATUS, String("Connected"));    
+    }
+    else
+    {
+        Serial.println("Printer disconnected");
+        hmi.Write_UString((uint16_t)PRINTER_STATUS, String("Disconnected"));
+    }
+    enter_state(SYS_WAIT_FOR_START);  // wait for first scan to synchronize
 }
 
 void loop()
@@ -236,6 +230,7 @@ void loop()
                 Serial.print((uint8_t)printer_status, HEX);
                 Serial.print(" -> ");
                 Serial.println(printer_status_to_text(printer_status));
+                hmi.Write_UString((uint16_t)PRINTER_STATUS, String("Connected"));
             }
 
             last_printer_response_ok = true;
@@ -252,6 +247,7 @@ void loop()
             if (should_log)
             {
                 Serial.println("Printer Status: NO RESPONSE");
+                hmi.Write_UString((uint16_t)PRINTER_STATUS, String("Disconnected"));
             }
 
             last_printer_response_ok = false;
@@ -271,10 +267,12 @@ void loop()
         if (barcode_status)
         {
             Serial.println("Scanner Connected");
+            hmi.Write_UString((uint16_t)SCANNER_STATUS, String("Connected"));
         }
         else
         {
             Serial.println("Scanner disconnected");
+            hmi.Write_UString((uint16_t)SCANNER_STATUS, String("Disconnected"));
         }
 
         lastConnectedState = barcode_status;
@@ -283,6 +281,7 @@ void loop()
             RGB_setColor(base_color());
         }
     }
+
     if (flashing && (millis() - flash_start_ms >= FLASH_DURATION_MS))
     {
         flashing = false;
@@ -298,7 +297,10 @@ void loop()
 
         shift_ok_total += ok;
         shift_ng_total += ng;
-
+        hmi.Write_Number((uint16_t)STICKER, (uint16_t)shift_ok_total);
+        Serial.print("Shift Totals -> OK: ");
+        Serial.println(shift_ok_total);
+    
 #if ENABLE_OK_NG_SUMMARY
         Serial.print("Window Summary -> OK: ");
         Serial.print(ok);
@@ -350,4 +352,17 @@ void loop()
             check_shift_rollover(shift, day, month, year);
         }
     }
+
+    static uint8_t last_cavity_sent = 0xFF;
+    static uint32_t last_sticker_sent = 0xFFFFFFFFUL;
+
+    if (last_cavity_sent != g_cavity_count)
+    {
+       hmi.Write_UString((uint16_t)MOLD_CAVITY, String(g_cavity_count));
+        last_cavity_sent = g_cavity_count;
+        Serial.print("Cavity Count -> ");
+        Serial.println(g_cavity_count);
+    }
+
+
 }

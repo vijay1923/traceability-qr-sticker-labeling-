@@ -33,96 +33,9 @@ char compute_shift(uint8_t hour)
     return (hour >= g_shift_a_hour && hour < g_shift_b_hour) ? 'A' : 'B';
 }
 
-bool build_mmyy_token(uint8_t month, uint16_t year, char out[5])
-{
-    if (month < 1 || month > 12)
-        return false;
-
-    int n = snprintf(out, 5, "%02d%02d", month, (int)(year % 100));
-    return (n == 4);
-}
-
-bool parse_mmyy_token(const char token[5], uint8_t &month, uint16_t &year)
-{
-    if (token == nullptr)
-        return false;
-
-    for (int i = 0; i < 4; i++)
-    {
-        if (token[i] < '0' || token[i] > '9')
-            return false;
-    }
-
-    if (token[4] != '\0')
-        return false;
-
-    int mo = (token[0] - '0') * 10 + (token[1] - '0');
-    int yy = (token[2] - '0') * 10 + (token[3] - '0');
-
-    if (mo < 1 || mo > 12)
-        return false;
-
-    month = (uint8_t)mo;
-    year = (uint16_t)(2000 + yy);
-    return true;
-}
-
-bool ensure_month_stats_file(uint8_t month, uint16_t year)
-{
-    if (!littlefs_mounted)
-        return false;
-
-    if (month < 1 || month > 12)
-        return false;
-
-    if (!LittleFS.exists(STATS_DIR))
-    {
-        LittleFS.mkdir(STATS_DIR);
-    }
-
-    char filename[32];
-    snprintf(filename, sizeof(filename), STATS_DIR "/%02d%02d.bat", month, (int)(year % 100));
-
-    if (LittleFS.exists(filename))
-        return true;
-
-    File f = LittleFS.open(filename, "w");
-    if (!f)
-    {
-        Serial.print("ERR - failed to create monthly stats file: ");
-        Serial.println(filename);
-        return false;
-    }
-
-    f.close();
-    Serial.print("MONTH FILE CREATED -> ");
-    Serial.println(filename);
-    return true;
-}
-
-void sync_month_stats_file(uint8_t month, uint16_t year)
-{
-    static uint8_t last_synced_month = 0;
-    static uint16_t last_synced_year = 0;
-
-    if (month == 0 || year == 0)
-        return;
-
-    if (month == last_synced_month && year == last_synced_year)
-        return;
-
-    if (ensure_month_stats_file(month, year))
-    {
-        last_synced_month = month;
-        last_synced_year = year;
-    }
-}
-
-// Writes one line to /stats/MMYY.bat : DD,shift,ok,ng
-// Month/year are encoded in the filename itself, so each record only needs
-// the day-of-month plus the shift totals. Append-only, ~2 writes/day -
-// acceptable flash wear, worst case on power loss mid-write is one
-// incomplete trailing line, not corruption of prior data.
+// Writes one line to /stats/MMYY.csv : DDMMYY,shift,ok,ng
+// Append-only, ~2 writes/day - acceptable flash wear, worst case on power
+// loss mid-write is one incomplete trailing line, not corruption of prior data.
 bool write_shift_stats(uint8_t day, uint8_t month, uint16_t year, char shift, uint32_t ok, uint32_t ng)
 {
     if (!littlefs_check_space_ok("write_shift_stats"))
@@ -134,7 +47,7 @@ bool write_shift_stats(uint8_t day, uint8_t month, uint16_t year, char shift, ui
     }
 
     char filename[32];
-    snprintf(filename, sizeof(filename), STATS_DIR "/%02d%02d.bat", month, (int)(year % 100));
+    snprintf(filename, sizeof(filename), STATS_DIR "/%02d%02d.csv", month, (int)(year % 100));
 
     File f = LittleFS.open(filename, "a");
     if (!f)
@@ -144,9 +57,9 @@ bool write_shift_stats(uint8_t day, uint8_t month, uint16_t year, char shift, ui
         return false;
     }
 
-    char line[32];
-    int line_len = snprintf(line,  sizeof(line), "%02d,%c,%lu,%lu\n",
-              day, shift, (unsigned long)ok, (unsigned long)ng);
+    char line[48];
+    int line_len = snprintf(line, sizeof(line), "%02d%02d%02d,%c,%lu,%lu\n",
+              day, month, (int)(year % 100), shift, (unsigned long)ok, (unsigned long)ng);
 
     size_t written = f.print(line);
     f.close();
@@ -190,17 +103,9 @@ bool write_checkpoint()
         return false;
     }
 
-    char mmyy[5];
-    if (!build_mmyy_token(shift_rec_month, shift_rec_year, mmyy))
-    {
-        Serial.println("ERR - invalid shift month/year for checkpoint");
-        f.close();
-        return false;
-    }
-
     char line[64];
-    int line_len = snprintf(line, sizeof(line), "%s,%02d,%c,%lu,%lu,%u\n",
-              mmyy, shift_rec_day,
+    int line_len = snprintf(line, sizeof(line), "%02d,%02d,%04d,%c,%lu,%lu,%u\n",
+              shift_rec_day, shift_rec_month, shift_rec_year,
               current_shift == '\0' ? '?' : current_shift,
               (unsigned long)shift_ok_total, (unsigned long)shift_ng_total,
               (unsigned)shift_counter);
@@ -227,22 +132,10 @@ bool read_checkpoint(uint8_t &day, uint8_t &month, uint16_t &year, char &shift,
     if (!littlefs_mounted)
         return false;
 
-    const char *checkpoint_path = STATS_CHECKPOINT_FILE;
-    if (!LittleFS.exists(checkpoint_path))
-    {
-        // Backward compatibility for older firmware that used current.dat
-        // as the checkpoint filename.
-        if (LittleFS.exists(STATS_DIR "/current.dat"))
-        {
-            checkpoint_path = STATS_DIR "/current.dat";
-        }
-        else
-        {
-            return false;
-        }
-    }
+    if (!LittleFS.exists(STATS_CHECKPOINT_FILE))
+        return false;
 
-    File f = LittleFS.open(checkpoint_path, "r");
+    File f = LittleFS.open(STATS_CHECKPOINT_FILE, "r");
     if (!f)
         return false;
 
@@ -255,32 +148,10 @@ bool read_checkpoint(uint8_t &day, uint8_t &month, uint16_t &year, char &shift,
     unsigned long ok_val, ng_val;
     unsigned int counter_val;
 
-    // New format (v2): MMYY,DD,shift,ok,ng,counter
-    char mmyy[5] = {0};
-    int parsed_v2 = sscanf(line, "%4[^,],%d,%c,%lu,%lu,%u",
-                           mmyy, &d, &shift, &ok_val, &ng_val, &counter_val);
+    int parsed = sscanf(line, "%d,%d,%d,%c,%lu,%lu,%u",
+                         &d, &mo, &y, &shift, &ok_val, &ng_val, &counter_val);
 
-    if (parsed_v2 == 6 && shift != '?')
-    {
-        uint8_t parsed_month;
-        uint16_t parsed_year;
-        if (!parse_mmyy_token(mmyy, parsed_month, parsed_year))
-            return false;
-
-        day = (uint8_t)d;
-        month = parsed_month;
-        year = parsed_year;
-        ok = (uint32_t)ok_val;
-        ng = (uint32_t)ng_val;
-        counter = (uint16_t)counter_val;
-        return true;
-    }
-
-    // Legacy format (v1): DD,MM,YYYY,shift,ok,ng,counter
-    int parsed_v1 = sscanf(line, "%d,%d,%d,%c,%lu,%lu,%u",
-                           &d, &mo, &y, &shift, &ok_val, &ng_val, &counter_val);
-
-    if (parsed_v1 != 7 || shift == '?')
+    if (parsed != 7 || shift == '?')
         return false; // corrupt / incomplete line, ignore rather than trust garbage
 
     day = (uint8_t)d;
