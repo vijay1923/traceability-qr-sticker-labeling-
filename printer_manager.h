@@ -3,8 +3,9 @@
 
 #include <HardwareSerial.h>
 #include "config.h"
+#include "hmi.h"
 
-HardwareSerial &printer_port = Serial1;
+HardwareSerial &printer_port = Serial2;
 
 bool printer_tx_busy = false;
 unsigned long last_printer_poll_ms = 0;
@@ -131,6 +132,7 @@ void send_to_printer(const char *label)
     if (!build_tspl_qr_job(label, job_buf, sizeof(job_buf), job_len))
     {
         Serial.println("PRINT FAILED: TSPL build error");
+        hmi.Write_UString((uint16_t)MESSAGE, String("Print Build Error"));
         return;
     }
 
