@@ -55,6 +55,7 @@ void onBarcodeScanned(const char *qrcode, int length)
 
     Serial.print("Extracted Data : ");
     Serial.println(extracted_data);
+    hmi.Write_UString((uint16_t)QR_CODE, String(extracted_data));
 
     if (!generate_traceability_qr(extracted_data))
     {
@@ -67,6 +68,7 @@ void onBarcodeScanned(const char *qrcode, int length)
     {
         Serial.print("REJECTED - generated QR failed validation: ");
         Serial.println(final_qr);
+       // hmi.Write_UString((uint16_t)QR_CODE, String(final_qr));
         RGB_flash(yellow);
         return;
     }
@@ -93,10 +95,17 @@ void onBarcodeScanned(const char *qrcode, int length)
 
     shift_counter++;
     printed_count++;
+    hmi.Write_UString((uint16_t)PRINT_COUNTER, String(printed_count));
+    hmi.Write_UString((uint16_t)STICKER, String(shift_ok_total + printed_count));
     Serial.print("Final QR : ");
     Serial.println(final_qr);
 
     send_to_printer(final_qr);
+
+    // PRINT_COUNTER updates on every successful print (event-driven).
+    // QR_CODE intentionally NOT touched here - it always shows only the
+    // extracted data from the scan, never the full generated/final QR.
+    // hmi.Write_UString((uint16_t)PRINT_COUNTER, String(printed_count));
 
     // Gate #2 (post-check): confirm printer is still healthy after the job.
     // We can't undo a job already sent - this is diagnostic, not a reject.
