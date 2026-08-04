@@ -8,6 +8,7 @@
 #include "shift_manager.h"
 #include "time_sync.h"
 #include "storage_manager.h"
+#include "hmi.h"
 
 void process_serial_line(char *raw_line, uint8_t raw_len)
 {
@@ -119,6 +120,11 @@ void process_serial_line(char *raw_line, uint8_t raw_len)
                 Serial.print(key_buf);
                 Serial.print(" set to ");
                 Serial.println(value);
+
+                if (strcmp(key_buf, "cavity") == 0)
+                {
+                    hmi_write_number((uint16_t)MOLD_CAVITY, g_cavity_count);
+                }
             }
             else
             {
@@ -134,6 +140,7 @@ void process_serial_line(char *raw_line, uint8_t raw_len)
     else if (strcmp(raw_line, "resetconfig") == 0)
     {
         reset_config_to_defaults();
+        hmi_write_number((uint16_t)MOLD_CAVITY, g_cavity_count);
     }
     else if (strcmp(raw_line, "version") == 0)
     {
@@ -173,6 +180,47 @@ void process_serial_line(char *raw_line, uint8_t raw_len)
         Serial.print(mins); Serial.print("m ");
         Serial.print(rem_secs); Serial.println("s");
     }
+    else if (strncmp(raw_line, "hmitext ", 8) == 0)
+    {
+        unsigned int vp;
+        int consumed = 0;
+        if (sscanf(raw_line + 8, "%x %n", &vp, &consumed) == 1 && consumed > 0)
+        {
+            const char *text = raw_line + 8 + consumed;
+            hmi.Write_UString((uint16_t)vp, String(text));
+            Serial.print("OK - wrote text to VP 0x");
+            Serial.print(vp, HEX);
+            Serial.print(": ");
+            Serial.println(text);
+        }
+        else
+        {
+            Serial.println("ERR - usage: hmitext <vp_hex> <text>   e.g. hmitext 5000 HELLO");
+        }
+    }
+    else if (strncmp(raw_line, "hmiwrite ", 9) == 0)
+    {
+        unsigned int vp;
+        int value;
+        if (sscanf(raw_line + 9, "%x %d", &vp, &value) == 2)
+        {
+            hmi.Write_UString((uint16_t)vp, String(value));
+            Serial.print("Vp : "); 
+            Serial.println(int(vp));
+            Serial.print("OK - wrote number to VP 0x");
+            Serial.print(vp, HEX);
+            Serial.print(": ");
+            Serial.println(value);
+        }
+        else
+        {
+            Serial.println("ERR - usage: hmiwrite <vp_hex> <number>   e.g. hmiwrite 5500 1234");
+        }
+    }
+    else if (strcmp(raw_line, "hmihelp") == 0)
+    {
+        hmi_test_help();
+    }
     else if (strcmp(raw_line, "help") == 0)
     {
         Serial.println("Available commands:");
@@ -187,6 +235,9 @@ void process_serial_line(char *raw_line, uint8_t raw_len)
         Serial.println("  resetconfig                   -> reset config to compiled-in defaults");
         Serial.println("  version                       -> show firmware version and build date");
         Serial.println("  resetdata                     -> shows warning; requires 'resetdata CONFIRM' to actually wipe /stats");
+        Serial.println("  hmitext <vp_hex> <text>       -> write text to a VP address (calibration: identify which VP is which)");
+        Serial.println("  hmiwrite <vp_hex> <number>    -> write a number to a VP address (calibration)");
+        Serial.println("  hmihelp                       -> show HMI-focused help");
         Serial.println("  verbose on|off                -> toggle extra diagnostic logging");
         Serial.println("  uptime                        -> show time since boot");
         Serial.println("  help                          -> display this help message");
