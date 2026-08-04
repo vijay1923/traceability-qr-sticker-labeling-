@@ -9,11 +9,12 @@
 // "resetconfig". At runtime, the actual values used everywhere in the
 // firmware are g_cycle_time_s / g_inspection_window_s / g_cavity_count /
 // g_shift_a_hour / g_shift_b_hour, loaded from NVS in setup().
-#define DEFAULT_CYCLE_TIME_S         30   // for testing
-#define DEFAULT_INSPECTION_WINDOW_S  10   // for testing
-#define DEFAULT_CAVITY_COUNT         8
-#define DEFAULT_SHIFT_A_START_HOUR   7    // 07:00 morning 7 to evening 7 
-#define DEFAULT_SHIFT_B_START_HOUR   19   // 19:00  evening 7 to morning 7
+
+#define CYCLE_TIME_S         30   // for testing
+#define SPECTION_WINDOW_S    30   // for testing
+#define CAVITY_COUNT         8
+#define SHIFT_A_START_HOUR   7    // 07:00 morning 7 to evening 7 
+#define SHIFT_B_START_HOUR   19   // 19:00  evening 7 to morning 7
 // ------------------------------------------------------------------------------------
 
 #define SCL_PIN 2 // i2c rtc
@@ -58,5 +59,19 @@
 // ------------------------------------------------------------------------------------
 
 #define SHIFT_CHECK_INTERVAL_MS 1000
+
+
+/// HMI Address 
+
+#define QR_CODE 0x5000 // rm batch code - for scanned qr code and final qr code 
+#define MESSAGE 0x5500  // top message line 
+#define PRINT_COUNTER 0x5600  // Print counter  - ok count from perticuler cycle 
+#define STICKER 0x5650  // sticker  - ok count shift wise 
+#define MOLD_CAVITY 0x5700  // mold cavity  - no of mold cavities 
+#define SCANNER_STATUS 0x5750  // scanner status  - connected / disconnected 
+#define PRINTER_STATUS 0x5800 // printer status  - connected / disconnected 
+
+
+
 
 #endif
