@@ -7,21 +7,21 @@
 // ---- Runtime configuration (Configuration Manager) ----
 // Loaded from NVS at boot (see load_config_from_nvs()); "config"/"setconfig"/
 // "resetconfig" serial commands read and modify these live, no reflash needed.
-uint32_t g_cycle_time_s        = DEFAULT_CYCLE_TIME_S;
-uint32_t g_inspection_window_s = DEFAULT_INSPECTION_WINDOW_S;
-uint8_t  g_cavity_count        = DEFAULT_CAVITY_COUNT;
-uint8_t  g_shift_a_hour        = DEFAULT_SHIFT_A_START_HOUR;
-uint8_t  g_shift_b_hour        = DEFAULT_SHIFT_B_START_HOUR;
+uint32_t g_cycle_time_s        = CYCLE_TIME_S;
+uint32_t g_inspection_window_s = SPECTION_WINDOW_S;
+uint8_t  g_cavity_count        = CAVITY_COUNT;
+uint8_t  g_shift_a_hour        = SHIFT_A_START_HOUR;
+uint8_t  g_shift_b_hour        = SHIFT_B_START_HOUR;
 Preferences cfg_prefs;
 // --------------------------------------------------------------------------
 
 void load_config_from_nvs()
 {
-    g_cycle_time_s        = cfg_prefs.getUInt("cycle_s", DEFAULT_CYCLE_TIME_S);
-    g_inspection_window_s = cfg_prefs.getUInt("insp_s", DEFAULT_INSPECTION_WINDOW_S);
-    g_cavity_count        = (uint8_t)cfg_prefs.getUInt("cavity", DEFAULT_CAVITY_COUNT);
-    g_shift_a_hour        = (uint8_t)cfg_prefs.getUInt("shift_a", DEFAULT_SHIFT_A_START_HOUR);
-    g_shift_b_hour        = (uint8_t)cfg_prefs.getUInt("shift_b", DEFAULT_SHIFT_B_START_HOUR);
+    g_cycle_time_s        = cfg_prefs.getUInt("cycle_s", CYCLE_TIME_S);
+    g_inspection_window_s = cfg_prefs.getUInt("insp_s", SPECTION_WINDOW_S);
+    g_cavity_count        = (uint8_t)cfg_prefs.getUInt("cavity", CAVITY_COUNT);
+    g_shift_a_hour        = (uint8_t)cfg_prefs.getUInt("shift_a", SHIFT_A_START_HOUR);
+    g_shift_b_hour        = (uint8_t)cfg_prefs.getUInt("shift_b", SHIFT_B_START_HOUR);
 }
 
 void print_config()
@@ -81,11 +81,11 @@ bool set_config_value(const char *key, long value)
 void reset_config_to_defaults()
 {
     cfg_prefs.clear();
-    g_cycle_time_s        = DEFAULT_CYCLE_TIME_S;
-    g_inspection_window_s = DEFAULT_INSPECTION_WINDOW_S;
-    g_cavity_count        = DEFAULT_CAVITY_COUNT;
-    g_shift_a_hour        = DEFAULT_SHIFT_A_START_HOUR;
-    g_shift_b_hour        = DEFAULT_SHIFT_B_START_HOUR;
+    g_cycle_time_s        = CYCLE_TIME_S;
+    g_inspection_window_s = SPECTION_WINDOW_S;
+    g_cavity_count        = CAVITY_COUNT;
+    g_shift_a_hour        = SHIFT_A_START_HOUR;
+    g_shift_b_hour        = SHIFT_B_START_HOUR;
     Serial.println("OK - config reset to compiled-in defaults");
 }
 
