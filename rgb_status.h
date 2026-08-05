@@ -13,6 +13,7 @@ uint32_t yellow;
 uint32_t cyan;
 uint32_t magenta;
 uint32_t white;
+uint32_t orange;
 
 bool flashing = false;
 unsigned long flash_start_ms = 0;
@@ -29,6 +30,7 @@ void RGB_init()
     cyan = RGB.Color(0, 255, 255);
     magenta = RGB.Color(255, 0, 255);
     white = RGB.Color(255, 255, 255);
+    orange = RGB.Color(255, 140, 0);
 
     RGB.clear();
     RGB.show();
