@@ -20,6 +20,27 @@ inline void hmi_write_number(uint16_t vp, uint32_t value)
     hmi.Write_Number(vp, hmi_to_u16(value));
 }
 
+// ---- Message priority arbitration ----
+// A routine state-transition message must never overwrite an active fault
+// message on the HMI's MESSAGE line. A fault can always override a routine
+// message; a routine message only displays if no higher-priority message is
+// currently "held". Cleared explicitly (priority reset to ROUTINE) the
+// moment the fault that raised it actually clears - see printer_manager.h.
+#define HMI_MSG_ROUTINE 0
+#define HMI_MSG_FAULT   1
+
+uint8_t hmi_message_priority = HMI_MSG_ROUTINE;
+
+void hmi_show_message(const char *msg, uint8_t priority)
+{
+    if (priority < hmi_message_priority)
+        return; // a higher-priority message is currently held, don't clobber it
+
+    hmi.Write_UString((uint16_t)MESSAGE, String(msg));
+    hmi_message_priority = priority;
+}
+// --------------------------------------------------------------------------
+
 void hmi_init()
 {
     // UART number is selected by DWIN_HMI_UART_NUM in dwindisplay.h.
