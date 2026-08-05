@@ -11,22 +11,8 @@
 #include "printer_manager.h"
 #include "rgb_status.h"
 
-// Defensive guard against a reentrant call from the scanner library's
-// callback (e.g. fired again before the previous call finishes). Cheap
-// regardless of whether the library can actually do this - if it can't,
-// this never triggers; if it can, shared globals (barcode_data,
-// extracted_data, final_qr) never get touched concurrently.
-bool scan_processing = false;
-
 void onBarcodeScanned(const char *qrcode, int length)
 {
-    if (scan_processing)
-    {
-        Serial.println("REJECTED - reentrant scan callback ignored (already processing a scan)");
-        return;
-    }
-    scan_processing = true;
-
     Serial.print("Scanned QR : ");
     Serial.println(qrcode);
 
@@ -38,29 +24,26 @@ void onBarcodeScanned(const char *qrcode, int length)
         Serial.println((int)system_state);
     }
 
+    // Gate #0: printer already known-faulty from the periodic background poll
+    // -> reject immediately, don't even start processing this scan. This is
+    // the fast path; Gate #2 below re-polls right before printing as a
+    // freshness check in case the fault cleared or appeared since the last
+    // periodic poll.
+    if (printer_fault_active)
+    {
+        Serial.print("REJECTED - printer fault active: ");
+        Serial.println(printer_status_to_text(printer_fault_status));
+        hmi_set_message(String("Printer Fault: ") + printer_status_to_text(printer_fault_status), MSG_SEV_FAULT);
+        RGB_flash(cyan); // rejected: printer not ready
+        return;
+    }
+
     // Gate #1: system busy in CYCLE_TIME -> reject immediately, don't process further
     if (system_state == SYS_CYCLE_TIME)
     {
         Serial.print("REJECTED - scan received during CYCLE_TIME (busy): ");
         Serial.println(qrcode);
         RGB_flash(blue); // rejected: system busy
-        scan_processing = false;
-        return;
-    }
-
-    // Gate #0: known printer fault (cached, no live poll) - fail fast.
-    // Gate #2 below still always does its own fresh poll immediately before
-    // printing regardless of this cache, so a fault that appears between
-    // polls is still caught there. This cache can be stale-pessimistic (a
-    // fault that actually cleared moments ago) - accepted tradeoff, biased
-    // toward safety, self-heals within one poll cycle (<=500ms, or 200ms
-    // while a fault is active).
-    if (printer_fault_active)
-    {
-        Serial.print("REJECTED - printer fault active (cached, no poll): ");
-        Serial.println(printer_status_to_text(printer_fault_status));
-        RGB_flash(cyan);
-        scan_processing = false;
         return;
     }
 
@@ -72,7 +55,6 @@ void onBarcodeScanned(const char *qrcode, int length)
         Serial.print("REJECTED - invalid format: ");
         Serial.println(barcode_data);
         RGB_flash(yellow); // rejected: wrong format
-        scan_processing = false;
         return;
     }
 
@@ -82,7 +64,6 @@ void onBarcodeScanned(const char *qrcode, int length)
     {
         Serial.println("Extraction FAILED (empty result)");
         RGB_flash(yellow);
-        scan_processing = false;
         return;
     }
 
@@ -94,7 +75,6 @@ void onBarcodeScanned(const char *qrcode, int length)
     {
         Serial.println("REJECTED - RTC not available/reliable, cannot generate trustworthy label");
         RGB_flash(white); // rejected: RTC not ready
-        scan_processing = false;
         return;
     }
 
@@ -104,23 +84,24 @@ void onBarcodeScanned(const char *qrcode, int length)
         Serial.println(final_qr);
        // hmi.Write_UString((uint16_t)QR_CODE, String(final_qr));
         RGB_flash(yellow);
-        scan_processing = false;
         return;
     }
 
-    // Gate #2: printer must report NORMAL before we commit to printing.
-    // Always a fresh, live poll - this is the real safety authority, Gate #0
-    // above is purely a fast-path optimization on top of it.
+    // Gate #2: printer must report NORMAL before we commit to printing
     printer_status_t pre_status;
     bool pre_ok = poll_printer_status(pre_status);
-    set_printer_fault_state(pre_ok, pre_status); // keep cache in sync with this live result too
 
     if (!pre_ok || pre_status != PRINTER_STATUS_NORMAL)
     {
         Serial.print("REJECTED - printer not ready before print. Status: ");
         Serial.println(pre_ok ? printer_status_to_text(pre_status) : "NO RESPONSE");
+
+        // Keep the fault flag/HMI/window-pause state in sync so the next
+        // scan hits the fast Gate #0 path instead of re-discovering the
+        // same fault, and the window stops burning down while it's stuck.
+        set_printer_fault(true, pre_status, pre_ok);
+
         RGB_flash(cyan); // rejected: printer not ready
-        scan_processing = false;
         return;
     }
 
@@ -130,6 +111,21 @@ void onBarcodeScanned(const char *qrcode, int length)
     if (system_state == SYS_WAIT_FOR_START)
     {
         enter_state(SYS_INSPECTION_WINDOW);
+    }
+
+    // Gate #3: never print more labels than the mold has cavities. Checked
+    // here (right at the commit point, after the window is guaranteed open)
+    // so printed_count is always compared against the live cavity count for
+    // THIS window, not a stale one from before a config change mid-run.
+    if (printed_count >= g_cavity_count)
+    {
+        Serial.print("REJECTED - cavity limit reached: ");
+        Serial.print(printed_count);
+        Serial.print("/");
+        Serial.println(g_cavity_count);
+        hmi_set_message(String("Cavity Limit Reached"), MSG_SEV_REJECT);
+        RGB_flash(orange); // rejected: cavity limit reached
+        return;
     }
 
     shift_counter++;
@@ -147,28 +143,23 @@ void onBarcodeScanned(const char *qrcode, int length)
     // hmi.Write_UString((uint16_t)PRINT_COUNTER, String(printed_count));
 
     // Gate #2 (post-check): confirm printer is still healthy after the job.
-    // We can't undo a job already sent - this is diagnostic, not a reject.
-    // Also feeds the fault cache + HMI, since this is a fresh live read too.
+    // We can't undo a job already sent - but we CAN make sure a fault that
+    // shows up right after printing is caught immediately (fault flag set,
+    // HMI updated, window paused) instead of waiting for the next scheduled
+    // periodic poll to notice.
     printer_status_t post_status;
     bool post_ok = poll_printer_status(post_status);
-    set_printer_fault_state(post_ok, post_status);
 
-    if (post_ok)
+    Serial.print("Printer Status After Print: ");
+    Serial.println(post_ok ? printer_status_to_text(post_status) : "NO RESPONSE");
+
+    if (!post_ok || post_status != PRINTER_STATUS_NORMAL)
     {
-        Serial.print("Printer Status After Print: ");
-        Serial.println(printer_status_to_text(post_status));
-        if (post_status != PRINTER_STATUS_NORMAL)
-        {
-            Serial.println("WARNING - printer reported non-normal status after print, label may be affected");
-        }
-    }
-    else
-    {
-        Serial.println("Printer Status After Print: NO RESPONSE");
+        Serial.println("WARNING - printer reported non-normal status after print, label may be affected");
+        set_printer_fault(true, post_status, post_ok);
     }
 
     RGB_flash(magenta); // success
-    scan_processing = false;
 }
 
 #endif
