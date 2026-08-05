@@ -27,19 +27,19 @@ void enter_state(system_state_t new_state)
     {
         case SYS_WAIT_FOR_START:
             Serial.println("STATE -> WAIT_FOR_START (waiting for first scan to synchronize)");
-           hmi.Write_UString((uint16_t)MESSAGE, String("Waiting for first scan"));
+            hmi_show_message("Waiting for first scan", HMI_MSG_ROUTINE);
             break;
 
         case SYS_INSPECTION_WINDOW:
             printed_count = 0;
             Serial.println("STATE -> INSPECTION_WINDOW (scan/print allowed)");
-            hmi.Write_UString((uint16_t)MESSAGE, String("Inspection Window Open"));
+            hmi_show_message("Inspection Window Open", HMI_MSG_ROUTINE);
             hmi_write_number((uint16_t)PRINT_COUNTER, 0);
             break;
 
         case SYS_CYCLE_TIME:
             Serial.println("STATE -> CYCLE_TIME (printing blocked)");
-            hmi.Write_UString((uint16_t)MESSAGE, String("Cycle Running"));
+            hmi_show_message("Cycle Running", HMI_MSG_ROUTINE);
             break;
     }
 }
