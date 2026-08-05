@@ -63,6 +63,42 @@ const char *printer_status_to_text(printer_status_t status)
     }
 }
 
+// ---- Printer fault cache (backs Gate #0 - fast reject without a live poll) ----
+// Gate #2 (pre-print) always does its own fresh poll regardless of this cache,
+// so this never weakens the actual print-time safety check - it only lets
+// onBarcodeScanned() fail fast on scans it already knows will be rejected,
+// instead of paying a poll wait for every single scan while the printer is
+// known to be down.
+bool printer_fault_active = false;
+printer_status_t printer_fault_status = PRINTER_STATUS_NORMAL;
+
+// Single place that updates the fault cache AND drives the HMI fault
+// message, so every poll site (boot, periodic, pre-print, post-print) gets
+// full treatment just by calling this instead of duplicating logic.
+void set_printer_fault_state(bool poll_ok, printer_status_t status)
+{
+    bool was_fault = printer_fault_active;
+
+    printer_fault_active = !(poll_ok && status == PRINTER_STATUS_NORMAL);
+    printer_fault_status = poll_ok ? status : PRINTER_STATUS_OTHER_ERROR;
+
+    if (printer_fault_active)
+    {
+        char msg[40];
+        snprintf(msg, sizeof(msg), "Printer Fault: %s",
+                 poll_ok ? printer_status_to_text(status) : "NO RESPONSE");
+        hmi_show_message(msg, HMI_MSG_FAULT);
+    }
+    else if (was_fault)
+    {
+        // Fault just cleared - release the priority hold so routine state
+        // messages can display again, then show a routine confirmation.
+        hmi_message_priority = HMI_MSG_ROUTINE;
+        hmi_show_message("Printer OK", HMI_MSG_ROUTINE);
+    }
+}
+// --------------------------------------------------------------------------
+
 void printer_init()
 {
     printer_port.begin(9600, SERIAL_8N1, PTR_RX, PTR_TX);  // printer initialization
