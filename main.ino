@@ -143,6 +143,15 @@ void setup()
         }
     }
 
+    // Fix: previously STICKER (shift count) was only ever written when an
+    // inspection window closed, or on shift rollover - so after a reboot the
+    // HMI showed whatever was left on screen (stale, or blank on a fresh
+    // display) until the first window finished. Write the real value now,
+    // immediately after shift_ok_total is resolved above (resumed from
+    // checkpoint, reset for a new shift, or defaulted to 0 if LittleFS isn't
+    // mounted) - covers every boot case, never blank, never waiting on a scan.
+    hmi.Write_Number((uint16_t)STICKER, (uint16_t)shift_ok_total);
+
     if (barcode_status)
     {
         Serial.println("Scanner Connected");
@@ -157,18 +166,22 @@ void setup()
     }
     printer_status_t boot_printer_status = PRINTER_STATUS_OTHER_ERROR;
     bool boot_printer_ok = poll_printer_status(boot_printer_status);
-    set_printer_fault_state(boot_printer_ok, boot_printer_status); // seed fault cache from boot poll, don't leave it at default
+    bool boot_printer_fault = !(boot_printer_ok && boot_printer_status == PRINTER_STATUS_NORMAL);
 
-    if (boot_printer_ok && boot_printer_status == PRINTER_STATUS_NORMAL)
+    Serial.println(boot_printer_fault ? "Printer disconnected/faulty at boot" : "Printer Connected");
+
+    // Seed printer_fault_active from this boot-time check instead of leaving
+    // it at its default (false) until the first periodic poll in loop() gets
+    // around to it - otherwise a printer that's already faulty at power-on
+    // wouldn't be flagged for up to PRINTER_POLL_INTERVAL_MS after boot.
+    set_printer_fault(boot_printer_fault, boot_printer_status, boot_printer_ok);
+    last_printer_response_ok = boot_printer_ok;
+    last_printer_status_valid = boot_printer_ok;
+    if (boot_printer_ok)
     {
-        Serial.println("Printer Connected");
-        hmi.Write_UString((uint16_t)PRINTER_STATUS, String("Connected"));    
+        last_logged_printer_status = boot_printer_status;
     }
-    else
-    {
-        Serial.println("Printer disconnected");
-        hmi.Write_UString((uint16_t)PRINTER_STATUS, String("Disconnected"));
-    }
+
     enter_state(SYS_WAIT_FOR_START);  // wait for first scan to synchronize
 }
 
@@ -208,6 +221,9 @@ void loop()
         }
     }
 
+    // Poll faster while a fault is active, so recovery (and the paused
+    // window resuming) is noticed as soon as possible instead of waiting
+    // out the full normal interval.
     unsigned long current_poll_interval = printer_fault_active ? PRINTER_FAULT_POLL_INTERVAL_MS : PRINTER_POLL_INTERVAL_MS;
     if (!printer_tx_busy && (millis() - last_printer_poll_ms) >= current_poll_interval)
     {
@@ -215,26 +231,32 @@ void loop()
 
         printer_status_t printer_status = PRINTER_STATUS_OTHER_ERROR;
         bool poll_ok = poll_printer_status(printer_status);
-        set_printer_fault_state(poll_ok, printer_status); // keep fault cache fresh every poll
 
-        bool should_log = false;
+        // Fault detection/HMI/window-pause stay on the fast internal poll
+        // rate above - but Serial logging is decoupled from it: log on
+        // change, otherwise repeat at most every PRINTER_LOG_HEARTBEAT_MS.
+        // Without this, a real fault at the 150ms fault-poll rate floods
+        // the same Serial port the command console reads from and buries
+        // typed commands/responses.
+        bool status_changed = poll_ok
+            ? !(last_printer_response_ok && last_printer_status_valid && printer_status == last_logged_printer_status)
+            : last_printer_response_ok; // true only if LAST poll succeeded - i.e. this failure is new, not a repeat
+        bool heartbeat_due = (!poll_ok || printer_status != PRINTER_STATUS_NORMAL) &&
+                             (millis() - last_printer_serial_log_ms) >= PRINTER_LOG_HEARTBEAT_MS;
+        bool should_log = status_changed || heartbeat_due;
+
         if (poll_ok)
         {
-            if (!last_printer_response_ok ||
-                !last_printer_status_valid ||
-                printer_status != last_logged_printer_status)
-            {
-                should_log = true;
-            }
-
             if (should_log)
             {
                 Serial.print("Printer Status: 0x");
                 Serial.print((uint8_t)printer_status, HEX);
                 Serial.print(" -> ");
                 Serial.println(printer_status_to_text(printer_status));
-                hmi.Write_UString((uint16_t)PRINTER_STATUS, String("Connected"));
+                last_printer_serial_log_ms = millis();
             }
+
+            set_printer_fault(printer_status != PRINTER_STATUS_NORMAL, printer_status, true);
 
             last_printer_response_ok = true;
             last_printer_status_valid = true;
@@ -242,16 +264,13 @@ void loop()
         }
         else
         {
-            if (last_printer_response_ok)
-            {
-                should_log = true;
-            }
-
             if (should_log)
             {
                 Serial.println("Printer Status: NO RESPONSE");
-                hmi.Write_UString((uint16_t)PRINTER_STATUS, String("Disconnected"));
+                last_printer_serial_log_ms = millis();
             }
+
+            set_printer_fault(true, PRINTER_STATUS_OTHER_ERROR, false);
 
             last_printer_response_ok = false;
             last_printer_status_valid = false;
@@ -291,9 +310,14 @@ void loop()
         RGB_setColor(base_color()); // ready
     }
 
-    // INSPECTION_WINDOW -> CYCLE_TIME (fixed duration, no early close, no extension)
-    if (system_state == SYS_INSPECTION_WINDOW &&
-        (millis() - state_start_ms) >= ((unsigned long)g_inspection_window_s * 1000UL))
+    // INSPECTION_WINDOW -> CYCLE_TIME (fixed duration, no early close, no
+    // extension - EXCEPT time spent paused for a printer fault doesn't
+    // count: window_pause_accum_ms is subtracted from elapsed time, and the
+    // close check is skipped entirely while still actively paused, so a
+    // printer outage can't burn cavities into NG just because the clock
+    // kept running while nothing could be printed.)
+    if (system_state == SYS_INSPECTION_WINDOW && !window_paused_for_printer &&
+        (millis() - state_start_ms - window_pause_accum_ms) >= ((unsigned long)g_inspection_window_s * 1000UL))
     {
         uint8_t ok = printed_count;
         uint8_t ng = (g_cavity_count > printed_count) ? (g_cavity_count - printed_count) : 0;
@@ -335,6 +359,18 @@ void loop()
         (millis() - state_start_ms) >= ((unsigned long)g_cycle_time_s * 1000UL))
     {
         enter_state(SYS_INSPECTION_WINDOW);
+
+        // This transition happens on a timer, not a scan, so unlike the
+        // scan-triggered WAIT_FOR_START->INSPECTION_WINDOW path (which is
+        // always preceded by a fresh Gate #0/#2 printer check), the printer
+        // could already be faulty right as this window opens. Start it
+        // paused immediately instead of waiting for the next poll to notice.
+        if (printer_fault_active)
+        {
+            window_paused_for_printer = true;
+            window_pause_start_ms = millis();
+            Serial.println("Inspection window PAUSED - printer fault (already faulty at window open)");
+        }
     }
 
     // Periodic, wall-clock-driven shift rollover check - independent of
