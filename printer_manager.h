@@ -11,6 +11,7 @@ bool printer_tx_busy = false;
 unsigned long last_printer_poll_ms = 0;
 bool last_printer_response_ok = false;
 bool last_printer_status_valid = false;
+unsigned long last_printer_serial_log_ms = 0;
 
 typedef enum : uint8_t
 {
@@ -40,6 +41,13 @@ typedef enum : uint8_t
 
 printer_status_t last_logged_printer_status = PRINTER_STATUS_OTHER_ERROR;
 
+// Set by set_printer_fault() (below). When true, the printer is either not
+// responding or reporting a non-NORMAL status - onBarcodeScanned() checks
+// this FIRST and rejects the scan immediately, before doing any other work,
+// so a known-bad printer blocks the whole cycle, not just the print step.
+bool printer_fault_active = false;
+printer_status_t printer_fault_status = PRINTER_STATUS_NORMAL; // meaningless while printer_fault_active == false
+
 const char *printer_status_to_text(printer_status_t status)
 {
     switch (status)
@@ -63,41 +71,56 @@ const char *printer_status_to_text(printer_status_t status)
     }
 }
 
-// ---- Printer fault cache (backs Gate #0 - fast reject without a live poll) ----
-// Gate #2 (pre-print) always does its own fresh poll regardless of this cache,
-// so this never weakens the actual print-time safety check - it only lets
-// onBarcodeScanned() fail fast on scans it already knows will be rejected,
-// instead of paying a poll wait for every single scan while the printer is
-// known to be down.
-bool printer_fault_active = false;
-printer_status_t printer_fault_status = PRINTER_STATUS_NORMAL;
-
-// Single place that updates the fault cache AND drives the HMI fault
-// message, so every poll site (boot, periodic, pre-print, post-print) gets
-// full treatment just by calling this instead of duplicating logic.
-void set_printer_fault_state(bool poll_ok, printer_status_t status)
+// Central place to raise or clear a printer fault. Every call site that
+// discovers a printer problem (the periodic background poll, the pre-print
+// check, the post-print check, or the boot-time check) should call this
+// instead of touching printer_fault_active/HMI directly - it keeps all of
+// them in sync and, as a side effect, pauses/resumes the INSPECTION_WINDOW
+// countdown (see state_machine.h) so a printer outage doesn't get counted
+// as NG cavities.
+//   active    - true if the printer currently has a problem
+//   status    - the status code, when the printer did respond
+//   responded - false if the printer gave no reply at all (vs. replying
+//               with a bad status) - only changes what's shown as text
+void set_printer_fault(bool active, printer_status_t status, bool responded = true)
 {
-    bool was_fault = printer_fault_active;
+    bool was_active = printer_fault_active;
+    printer_fault_active = active;
+    printer_fault_status = active ? status : PRINTER_STATUS_NORMAL;
 
-    printer_fault_active = !(poll_ok && status == PRINTER_STATUS_NORMAL);
-    printer_fault_status = poll_ok ? status : PRINTER_STATUS_OTHER_ERROR;
-
-    if (printer_fault_active)
+    if (active)
     {
-        char msg[40];
-        snprintf(msg, sizeof(msg), "Printer Fault: %s",
-                 poll_ok ? printer_status_to_text(status) : "NO RESPONSE");
-        hmi_show_message(msg, HMI_MSG_FAULT);
+        const char *status_text = responded ? printer_status_to_text(status) : "Disconnected";
+        hmi.Write_UString((uint16_t)PRINTER_STATUS, String(status_text));
+        hmi_set_message(String("Printer Fault: ") + status_text, MSG_SEV_FAULT);
     }
-    else if (was_fault)
+    else
     {
-        // Fault just cleared - release the priority hold so routine state
-        // messages can display again, then show a routine confirmation.
-        hmi_message_priority = HMI_MSG_ROUTINE;
-        hmi_show_message("Printer OK", HMI_MSG_ROUTINE);
+        hmi.Write_UString((uint16_t)PRINTER_STATUS, String("Connected"));
+        if (was_active)
+        {
+            // Only speak up if we're actually clearing something, not on
+            // every routine "still fine" poll.
+            hmi_set_message(String("Printer Ready"), MSG_SEV_INFO, true);
+        }
+    }
+
+    if (system_state == SYS_INSPECTION_WINDOW)
+    {
+        if (active && !was_active && !window_paused_for_printer)
+        {
+            window_paused_for_printer = true;
+            window_pause_start_ms = millis();
+            Serial.println("Inspection window PAUSED - printer fault");
+        }
+        else if (!active && was_active && window_paused_for_printer)
+        {
+            window_pause_accum_ms += millis() - window_pause_start_ms;
+            window_paused_for_printer = false;
+            Serial.println("Inspection window RESUMED - printer OK");
+        }
     }
 }
-// --------------------------------------------------------------------------
 
 void printer_init()
 {
@@ -115,14 +138,15 @@ bool build_tspl_qr_job(const char *qr_data, char *out_buf, size_t out_buf_size, 
         return false;
     }
 
-    int n = snprintf(
+    int n = snprintf
+    (
         out_buf,
         out_buf_size,
-        "SIZE 60 mm,40 mm\r\n"
-        "GAP 0 mm,0 mm\r\n"
+        "SIZE 16 mm,16 mm\r\n"
+        "GAP 3 mm,3 mm\r\n"
         "DIRECTION 1\r\n"
         "CLS\r\n"
-        "QRCODE 100,100,H,4,A,0,\"%s\"\r\n"
+        "DMATRIX 15,0,128,128,x5,\"%s\"\r\n"
         "PRINT 1,1\r\n",
         qr_data);
 
@@ -168,7 +192,7 @@ void send_to_printer(const char *label)
     if (!build_tspl_qr_job(label, job_buf, sizeof(job_buf), job_len))
     {
         Serial.println("PRINT FAILED: TSPL build error");
-        hmi.Write_UString((uint16_t)MESSAGE, String("Print Build Error"));
+        hmi_set_message(String("Print Build Error"), MSG_SEV_FAULT, true);
         return;
     }
 
