@@ -31,6 +31,7 @@
 
 #define FLASH_DURATION_MS 500
 #define PRINTER_POLL_INTERVAL_MS 500
+#define PRINTER_FAULT_POLL_INTERVAL_MS 200  // shorter poll while faulted - faster recovery detection
 #define PRINTER_REPLY_TIMEOUT_MS 500
 #define PRINTER_STATUS_CMD "\x1B!?"
 
