@@ -157,6 +157,7 @@ void setup()
     }
     printer_status_t boot_printer_status = PRINTER_STATUS_OTHER_ERROR;
     bool boot_printer_ok = poll_printer_status(boot_printer_status);
+    set_printer_fault_state(boot_printer_ok, boot_printer_status); // seed fault cache from boot poll, don't leave it at default
 
     if (boot_printer_ok && boot_printer_status == PRINTER_STATUS_NORMAL)
     {
@@ -207,12 +208,14 @@ void loop()
         }
     }
 
-    if (!printer_tx_busy && (millis() - last_printer_poll_ms) >= PRINTER_POLL_INTERVAL_MS)
+    unsigned long current_poll_interval = printer_fault_active ? PRINTER_FAULT_POLL_INTERVAL_MS : PRINTER_POLL_INTERVAL_MS;
+    if (!printer_tx_busy && (millis() - last_printer_poll_ms) >= current_poll_interval)
     {
         last_printer_poll_ms = millis();
 
         printer_status_t printer_status = PRINTER_STATUS_OTHER_ERROR;
         bool poll_ok = poll_printer_status(printer_status);
+        set_printer_fault_state(poll_ok, printer_status); // keep fault cache fresh every poll
 
         bool should_log = false;
         if (poll_ok)
