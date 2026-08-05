@@ -20,26 +20,28 @@ inline void hmi_write_number(uint16_t vp, uint32_t value)
     hmi.Write_Number(vp, hmi_to_u16(value));
 }
 
-// ---- Message priority arbitration ----
-// A routine state-transition message must never overwrite an active fault
-// message on the HMI's MESSAGE line. A fault can always override a routine
-// message; a routine message only displays if no higher-priority message is
-// currently "held". Cleared explicitly (priority reset to ROUTINE) the
-// moment the fault that raised it actually clears - see printer_manager.h.
-#define HMI_MSG_ROUTINE 0
-#define HMI_MSG_FAULT   1
+// ---- MESSAGE-line priority ----
+// Several places want to put text on the HMI's single top MESSAGE line
+// (routine state text, cavity-limit rejections, printer faults). Without
+// a priority rule, whichever one writes last wins - so a routine "Cycle
+// Running" could silently overwrite an active printer-fault message.
+// Higher severity always wins; equal-or-higher can refresh; force=true
+// bypasses the check entirely (used when a condition is intentionally
+// being cleared).
+#define MSG_SEV_INFO   0  // routine state text
+#define MSG_SEV_REJECT 1  // transient scan rejection (cavity limit, etc.)
+#define MSG_SEV_FAULT  2  // printer fault - persists until explicitly cleared
 
-uint8_t hmi_message_priority = HMI_MSG_ROUTINE;
+uint8_t g_message_severity = MSG_SEV_INFO;
 
-void hmi_show_message(const char *msg, uint8_t priority)
+void hmi_set_message(const String &text, uint8_t severity, bool force = false)
 {
-    if (priority < hmi_message_priority)
-        return; // a higher-priority message is currently held, don't clobber it
-
-    hmi.Write_UString((uint16_t)MESSAGE, String(msg));
-    hmi_message_priority = priority;
+    if (force || severity >= g_message_severity)
+    {
+        hmi.Write_UString((uint16_t)MESSAGE, text);
+        g_message_severity = severity;
+    }
 }
-// --------------------------------------------------------------------------
 
 void hmi_init()
 {
@@ -70,10 +72,10 @@ void hmi_init()
 
     // Boot defaults (all as text via Write_UString)
 
-    // hmi.Write_UString((uint16_t)QR_CODE, String("Startup"));
-    // hmi_write_number((uint16_t)PRINT_COUNTER, 0);
-    // hmi_write_number((uint16_t)STICKER, 0);
-    // hmi_write_number((uint16_t)MOLD_CAVITY, CAVITY_COUNT);
+    hmi.Write_UString((uint16_t)QR_CODE, String(""));
+    hmi.Write_UString((uint16_t)PRINT_COUNTER, String(""));
+    hmi.Write_UString((uint16_t)STICKER, String(""));
+    hmi.Write_UString((uint16_t)MOLD_CAVITY, String(""));
 }
 
 void hmi_test_help()
