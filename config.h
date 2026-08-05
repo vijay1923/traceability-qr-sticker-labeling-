@@ -31,7 +31,8 @@
 
 #define FLASH_DURATION_MS 500
 #define PRINTER_POLL_INTERVAL_MS 500
-#define PRINTER_FAULT_POLL_INTERVAL_MS 200  // shorter poll while faulted - faster recovery detection
+#define PRINTER_FAULT_POLL_INTERVAL_MS 150  // faster polling while a fault is active, so recovery is caught sooner
+#define PRINTER_LOG_HEARTBEAT_MS 5000       // repeat an unchanged fault to Serial at most this often, so it doesn't drown out the command console
 #define PRINTER_REPLY_TIMEOUT_MS 500
 #define PRINTER_STATUS_CMD "\x1B!?"
 
