@@ -123,7 +123,7 @@ void process_serial_line(char *raw_line, uint8_t raw_len)
 
                 if (strcmp(key_buf, "cavity") == 0)
                 {
-                    hmi_write_number((uint16_t)MOLD_CAVITY, g_cavity_count);
+                    hmi_write_text((uint16_t)MOLD_CAVITY, String(g_cavity_count));
                 }
             }
             else
@@ -140,7 +140,7 @@ void process_serial_line(char *raw_line, uint8_t raw_len)
     else if (strcmp(raw_line, "resetconfig") == 0)
     {
         reset_config_to_defaults();
-        hmi_write_number((uint16_t)MOLD_CAVITY, g_cavity_count);
+        hmi_write_text((uint16_t)MOLD_CAVITY, String(g_cavity_count));
     }
     else if (strcmp(raw_line, "version") == 0)
     {
@@ -187,7 +187,7 @@ void process_serial_line(char *raw_line, uint8_t raw_len)
         if (sscanf(raw_line + 8, "%x %n", &vp, &consumed) == 1 && consumed > 0)
         {
             const char *text = raw_line + 8 + consumed;
-            hmi.Write_UString((uint16_t)vp, String(text));
+            hmi_write_text((uint16_t)vp, String(text));
             Serial.print("OK - wrote text to VP 0x");
             Serial.print(vp, HEX);
             Serial.print(": ");
@@ -204,7 +204,7 @@ void process_serial_line(char *raw_line, uint8_t raw_len)
         int value;
         if (sscanf(raw_line + 9, "%x %d", &vp, &value) == 2)
         {
-            hmi.Write_UString((uint16_t)vp, String(value));
+            hmi_write_text((uint16_t)vp, String(value));
             Serial.print("Vp : "); 
             Serial.println(int(vp));
             Serial.print("OK - wrote number to VP 0x");
