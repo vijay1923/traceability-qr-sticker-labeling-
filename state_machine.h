@@ -46,7 +46,7 @@ void enter_state(system_state_t new_state)
             window_paused_for_printer = false;
             Serial.println("STATE -> INSPECTION_WINDOW (scan/print allowed)");
             hmi_set_message(String("Inspection Window Open"), MSG_SEV_INFO);
-            hmi_write_number((uint16_t)PRINT_COUNTER, 0);
+            hmi_write_text((uint16_t)PRINT_COUNTER, String(0));
             break;
 
         case SYS_CYCLE_TIME:
