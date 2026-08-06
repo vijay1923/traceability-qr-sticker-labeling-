@@ -51,7 +51,7 @@ void onBarcodeScanned(const char *qrcode, int length)
     if (printer_fault_active)
     {
         Serial.print("REJECTED - printer fault active: ");
-        Serial.println(printer_status_to_text(printer_fault_status));
+        Serial.println(printer_status_to_text(printer_fault_status)); 
        // hmi_set_message(String("Printer Fault: ") + printer_status_to_text(printer_fault_status), MSG_SEV_FAULT);
         RGB_flash(cyan); // rejected: printer not ready
         return;
@@ -66,7 +66,7 @@ void onBarcodeScanned(const char *qrcode, int length)
         return;
     }
 
-    if (!validate_raw_format(barcode_data))
+    if (!validate_raw_format(barcode_data)) // 
     {
         Serial.print("REJECTED - invalid format: ");
         Serial.println(barcode_data);
