@@ -11,7 +11,7 @@
 // g_shift_a_hour / g_shift_b_hour, loaded from NVS in setup().
 
 #define CYCLE_TIME_S         30   // for testing
-#define SPECTION_WINDOW_S    30   // for testing
+#define INSPECTION_WINDOW_S    30   // for testing
 #define CAVITY_COUNT         8
 #define SHIFT_A_START_HOUR   7    // 07:00 morning 7 to evening 7 
 #define SHIFT_B_START_HOUR   19   // 19:00  evening 7 to morning 7
