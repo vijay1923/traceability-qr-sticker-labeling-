@@ -91,12 +91,12 @@ void set_printer_fault(bool active, printer_status_t status, bool responded = tr
     if (active)
     {
         const char *status_text = responded ? printer_status_to_text(status) : "Disconnected";
-        hmi.Write_UString((uint16_t)PRINTER_STATUS, String(status_text));
+        hmi_write_text((uint16_t)PRINTER_STATUS, String(status_text));
         hmi_set_message(String("Printer Fault: ") + status_text, MSG_SEV_FAULT);
     }
     else
     {
-        hmi.Write_UString((uint16_t)PRINTER_STATUS, String("Connected"));
+        hmi_write_text((uint16_t)PRINTER_STATUS, String("Connected"));
         if (was_active)
         {
             // Only speak up if we're actually clearing something, not on
