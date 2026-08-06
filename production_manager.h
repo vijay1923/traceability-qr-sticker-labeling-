@@ -11,6 +11,9 @@
 #include "printer_manager.h"
 #include "rgb_status.h"
 
+// tracks the raw-material batch field (first segment) of the last accepted scan
+static char last_batch_id[20] = "";
+
 void onBarcodeScanned(const char *qrcode, int length)
 {
     Serial.print("Scanned QR : ");
@@ -24,6 +27,22 @@ void onBarcodeScanned(const char *qrcode, int length)
         Serial.println((int)system_state);
     }
 
+    strncpy(barcode_data, qrcode, sizeof(barcode_data) - 1);
+    barcode_data[sizeof(barcode_data) - 1] = '\0';
+
+    // Config-update barcode: CFG:cycletime=<min>[,cavity=<n>][,inspwindow=<min>]
+    // Checked FIRST, before any printer/production-state gates - a config
+    // change doesn't touch the printer or consume a cavity slot, so there's
+    // no reason a printer fault or a busy CYCLE_TIME should block it. This
+    // also means it's the one scan type that always works, useful if the
+    // printer fault itself needs a config correction to resolve.
+    if (strncmp(barcode_data, "CFG:", 4) == 0)
+    {
+        parse_config_barcode(barcode_data + 4);
+        RGB_flash(white);
+        return;
+    }
+
     // Gate #0: printer already known-faulty from the periodic background poll
     // -> reject immediately, don't even start processing this scan. This is
     // the fast path; Gate #2 below re-polls right before printing as a
@@ -33,7 +52,7 @@ void onBarcodeScanned(const char *qrcode, int length)
     {
         Serial.print("REJECTED - printer fault active: ");
         Serial.println(printer_status_to_text(printer_fault_status));
-        hmi_set_message(String("Printer Fault: ") + printer_status_to_text(printer_fault_status), MSG_SEV_FAULT);
+       // hmi_set_message(String("Printer Fault: ") + printer_status_to_text(printer_fault_status), MSG_SEV_FAULT);
         RGB_flash(cyan); // rejected: printer not ready
         return;
     }
@@ -46,9 +65,6 @@ void onBarcodeScanned(const char *qrcode, int length)
         RGB_flash(blue); // rejected: system busy
         return;
     }
-
-    strncpy(barcode_data, qrcode, sizeof(barcode_data) - 1);
-    barcode_data[sizeof(barcode_data) - 1] = '\0';
 
     if (!validate_raw_format(barcode_data))
     {
@@ -69,7 +85,18 @@ void onBarcodeScanned(const char *qrcode, int length)
 
     Serial.print("Extracted Data : ");
     Serial.println(extracted_data);
-    hmi.Write_UString((uint16_t)QR_CODE, String(extracted_data));
+    hmi_write_text((uint16_t)QR_CODE, String(extracted_data));
+
+    // New raw-material batch detected → reset cycle so printing can resume
+    if (last_batch_id[0] != '\0' && strcmp(extracted_data, last_batch_id) != 0)
+    {
+        Serial.print("NEW BATCH detected (");
+        Serial.print(last_batch_id);
+        Serial.print(" -> ");
+        Serial.print(extracted_data);
+        Serial.println(") - resetting cycle");
+        enter_state(SYS_WAIT_FOR_START);
+    }
 
     if (!generate_traceability_qr(extracted_data))
     {
@@ -130,8 +157,10 @@ void onBarcodeScanned(const char *qrcode, int length)
 
     shift_counter++;
     printed_count++;
-    hmi.Write_UString((uint16_t)PRINT_COUNTER, String(printed_count));
-    hmi.Write_UString((uint16_t)STICKER, String(shift_ok_total + printed_count));
+    strncpy(last_batch_id, extracted_data, sizeof(last_batch_id) - 1);
+    last_batch_id[sizeof(last_batch_id) - 1] = '\0';
+    hmi_write_text((uint16_t)PRINT_COUNTER, String(printed_count));
+    hmi_write_text((uint16_t)STICKER, String(shift_ok_total + printed_count));
     Serial.print("Final QR : ");
     Serial.println(final_qr);
 
@@ -140,7 +169,7 @@ void onBarcodeScanned(const char *qrcode, int length)
     // PRINT_COUNTER updates on every successful print (event-driven).
     // QR_CODE intentionally NOT touched here - it always shows only the
     // extracted data from the scan, never the full generated/final QR.
-    // hmi.Write_UString((uint16_t)PRINT_COUNTER, String(printed_count));
+    // hmi_write_text((uint16_t)PRINT_COUNTER, String(printed_count));
 
     // Gate #2 (post-check): confirm printer is still healthy after the job.
     // We can't undo a job already sent - but we CAN make sure a fault that
