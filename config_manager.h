@@ -3,12 +3,13 @@
 
 #include <Preferences.h>
 #include "config.h"
+#include "hmi.h"
 
 // ---- Runtime configuration (Configuration Manager) ----
 // Loaded from NVS at boot (see load_config_from_nvs()); "config"/"setconfig"/
 // "resetconfig" serial commands read and modify these live, no reflash needed.
 uint32_t g_cycle_time_s        = CYCLE_TIME_S;
-uint32_t g_inspection_window_s = SPECTION_WINDOW_S;
+uint32_t g_inspection_window_s = INSPECTION_WINDOW_S;
 uint8_t  g_cavity_count        = CAVITY_COUNT;
 uint8_t  g_shift_a_hour        = SHIFT_A_START_HOUR;
 uint8_t  g_shift_b_hour        = SHIFT_B_START_HOUR;
@@ -18,7 +19,7 @@ Preferences cfg_prefs;
 void load_config_from_nvs()
 {
     g_cycle_time_s        = cfg_prefs.getUInt("cycle_s", CYCLE_TIME_S);
-    g_inspection_window_s = cfg_prefs.getUInt("insp_s", SPECTION_WINDOW_S);
+    g_inspection_window_s = cfg_prefs.getUInt("insp_s", INSPECTION_WINDOW_S);
     g_cavity_count        = (uint8_t)cfg_prefs.getUInt("cavity", CAVITY_COUNT);
     g_shift_a_hour        = (uint8_t)cfg_prefs.getUInt("shift_a", SHIFT_A_START_HOUR);
     g_shift_b_hour        = (uint8_t)cfg_prefs.getUInt("shift_b", SHIFT_B_START_HOUR);
@@ -78,11 +79,55 @@ bool set_config_value(const char *key, long value)
     return false; // unknown key
 }
 
+// Parses a scanned config barcode payload (everything after "CFG:").
+// Any subset of fields is accepted; time fields are in minutes and stored as seconds.
+// Example payloads: "cycletime=5"  |  "cycletime=5,cavity=6"  |  "cycletime=5,cavity=6,inspwindow=1"
+void parse_config_barcode(const char *payload)
+{
+    char buf[64];
+    strncpy(buf, payload, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
+
+    bool any_ok = false;
+    char *token = strtok(buf, ",");
+    while (token != nullptr)
+    {
+        char key[16];
+        long raw_val;
+        if (sscanf(token, "%15[^=]=%ld", key, &raw_val) == 2)
+        {
+            long store_val = raw_val;
+            if (strcmp(key, "cycletime") == 0 || strcmp(key, "inspwindow") == 0)
+                store_val = raw_val * 60L; // minutes → seconds
+
+            if (set_config_value(key, store_val))
+            {
+                Serial.print("CFG OK - ");
+                Serial.print(key);
+                Serial.print(" = ");
+                Serial.println(store_val);
+                if (strcmp(key, "cavity") == 0)
+                    hmi_write_text((uint16_t)MOLD_CAVITY, String(g_cavity_count));
+                any_ok = true;
+            }
+            else
+            {
+                Serial.print("CFG ERR - bad key or value: ");
+                Serial.println(key);
+            }
+        }
+        token = strtok(nullptr, ",");
+    }
+
+    if (any_ok)
+        print_config();
+}
+
 void reset_config_to_defaults()
 {
     cfg_prefs.clear();
     g_cycle_time_s        = CYCLE_TIME_S;
-    g_inspection_window_s = SPECTION_WINDOW_S;
+    g_inspection_window_s = INSPECTION_WINDOW_S;
     g_cavity_count        = CAVITY_COUNT;
     g_shift_a_hour        = SHIFT_A_START_HOUR;
     g_shift_b_hour        = SHIFT_B_START_HOUR;
