@@ -335,7 +335,7 @@ void check_shift_rollover(char new_shift, uint8_t day, uint8_t month, uint16_t y
         shift_ok_total = 0;
         shift_ng_total = 0;
         shift_counter = 0;
-        hmi_write_number((uint16_t)STICKER, 0); // reset display the moment the shift actually changes
+        hmi_write_text((uint16_t)STICKER, String(0)); // reset display the moment the shift actually changes
     }
 
     // Re-anchor the record date whenever a (new) shift begins - covers both
@@ -367,7 +367,7 @@ void apply_shift_rollover(char new_shift, uint8_t day, uint8_t month, uint16_t y
     shift_ok_total = 0;
     shift_ng_total = 0;
     shift_counter = 0;
-    hmi_write_number((uint16_t)STICKER, 0); // reset display the moment the shift actually changes
+    hmi_write_text((uint16_t)STICKER, String(0)); // reset display the moment the shift actually changes
 
     shift_rec_day = day;
     shift_rec_month = month;
