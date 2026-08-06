@@ -150,19 +150,19 @@ void setup()
     // immediately after shift_ok_total is resolved above (resumed from
     // checkpoint, reset for a new shift, or defaulted to 0 if LittleFS isn't
     // mounted) - covers every boot case, never blank, never waiting on a scan.
-    hmi.Write_Number((uint16_t)STICKER, (uint16_t)shift_ok_total);
+    hmi_write_text((uint16_t)STICKER, String(shift_ok_total));
 
     if (barcode_status)
     {
         Serial.println("Scanner Connected");
         RGB_setColor(green); // ready
-        hmi.Write_UString((uint16_t)SCANNER_STATUS, String("Connected"));
+        hmi_write_text((uint16_t)SCANNER_STATUS, String("Connected"));
     }
     else
     {
         Serial.println("Scanner disconnected");
         RGB_setColor(red); // not ready
-        hmi.Write_UString((uint16_t)SCANNER_STATUS, String("Disconnected"));
+        hmi_write_text((uint16_t)SCANNER_STATUS, String("Disconnected"));
     }
     printer_status_t boot_printer_status = PRINTER_STATUS_OTHER_ERROR;
     bool boot_printer_ok = poll_printer_status(boot_printer_status);
@@ -289,12 +289,12 @@ void loop()
         if (barcode_status)
         {
             Serial.println("Scanner Connected");
-            hmi.Write_UString((uint16_t)SCANNER_STATUS, String("Connected"));
+            hmi_write_text((uint16_t)SCANNER_STATUS, String("Connected"));
         }
         else
         {
             Serial.println("Scanner disconnected");
-            hmi.Write_UString((uint16_t)SCANNER_STATUS, String("Disconnected"));
+            hmi_write_text((uint16_t)SCANNER_STATUS, String("Disconnected"));
         }
 
         lastConnectedState = barcode_status;
@@ -324,7 +324,7 @@ void loop()
 
         shift_ok_total += ok;
         shift_ng_total += ng;
-        hmi.Write_Number((uint16_t)STICKER, (uint16_t)shift_ok_total);
+        hmi_write_text((uint16_t)STICKER, String(shift_ok_total));
         Serial.print("Shift Totals -> OK: ");
         Serial.println(shift_ok_total);
     
@@ -397,7 +397,7 @@ void loop()
 
     if (last_cavity_sent != g_cavity_count)
     {
-       hmi.Write_UString((uint16_t)MOLD_CAVITY, String(g_cavity_count));
+       hmi_write_text((uint16_t)MOLD_CAVITY, String(g_cavity_count));
         last_cavity_sent = g_cavity_count;
         Serial.print("Cavity Count -> ");
         Serial.println(g_cavity_count);
