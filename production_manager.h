@@ -51,8 +51,9 @@ void onBarcodeScanned(const char *qrcode, int length)
     if (printer_fault_active)
     {
         Serial.print("REJECTED - printer fault active: ");
-        Serial.println(printer_status_to_text(printer_fault_status)); 
-       // hmi_set_message(String("Printer Fault: ") + printer_status_to_text(printer_fault_status), MSG_SEV_FAULT);
+        Serial.println(printer_status_to_text(printer_fault_status));
+       // Printer fault message already pushed by set_printer_fault() via
+       // the condition registry - no need to push it again here.
         RGB_flash(cyan); // rejected: printer not ready
         return;
     }
@@ -66,7 +67,7 @@ void onBarcodeScanned(const char *qrcode, int length)
         return;
     }
 
-    if (!validate_raw_format(barcode_data)) // 
+    if (!validate_raw_format(barcode_data))
     {
         Serial.print("REJECTED - invalid format: ");
         Serial.println(barcode_data);
@@ -150,7 +151,7 @@ void onBarcodeScanned(const char *qrcode, int length)
         Serial.print(printed_count);
         Serial.print("/");
         Serial.println(g_cavity_count);
-        hmi_set_message(String("Cavity Limit Reached"), MSG_SEV_REJECT);
+        hmi_condition_set(HMI_COND_REJECT, String("Cavity Limit Reached"), HMI_SEV_REJECT, 3000);
         RGB_flash(orange); // rejected: cavity limit reached
         return;
     }
@@ -189,6 +190,16 @@ void onBarcodeScanned(const char *qrcode, int length)
     }
 
     RGB_flash(magenta); // success
+
+    // This print just filled the last cavity - close the window right now
+    // rather than waiting for the timer to expire. Done last, after the
+    // post-print check above, so that check still runs against a window
+    // that's technically still open.
+    if (printed_count >= g_cavity_count)
+    {
+        Serial.println("Cavity limit reached on this print - closing window early");
+        close_inspection_window();
+    }
 }
 
 #endif
