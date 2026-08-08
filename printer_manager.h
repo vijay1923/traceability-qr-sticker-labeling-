@@ -4,6 +4,7 @@
 #include <HardwareSerial.h>
 #include "config.h"
 #include "hmi.h"
+#include "state_machine.h"
 
 HardwareSerial &printer_port = Serial2;
 
@@ -81,45 +82,31 @@ const char *printer_status_to_text(printer_status_t status)
 //   active    - true if the printer currently has a problem
 //   status    - the status code, when the printer did respond
 //   responded - false if the printer gave no reply at all (vs. replying
-//               with a bad status) - only changes what's shown as text
+//               with a bad status) - PRINTER_STATUS only ever shows
+//               Connected/Disconnected based on this; the actual fault
+//               detail (jam, out of paper, etc.) goes to MESSAGE only.
 void set_printer_fault(bool active, printer_status_t status, bool responded = true)
 {
-    bool was_active = printer_fault_active;
     printer_fault_active = active;
     printer_fault_status = active ? status : PRINTER_STATUS_NORMAL;
+
+    // PRINTER_STATUS: always just Connected/Disconnected. A printer that
+    // responded with a bad status (paper jam etc.) is still physically
+    // connected - it answered us - so that's "Connected", not a fault code.
+    hmi_write_text((uint16_t)PRINTER_STATUS, String(responded ? "Connected" : "Disconnected"));
 
     if (active)
     {
         const char *status_text = responded ? printer_status_to_text(status) : "Disconnected";
-        hmi_write_text((uint16_t)PRINTER_STATUS, String(status_text));
-        hmi_set_message(String("Printer Fault: ") + status_text, MSG_SEV_FAULT);
+        hmi_condition_set(HMI_COND_PRINTER, String("Printer Fault: ") + status_text, HMI_SEV_PRINTER);
     }
     else
     {
-        hmi_write_text((uint16_t)PRINTER_STATUS, String("Connected"));
-        if (was_active)
-        {
-            // Only speak up if we're actually clearing something, not on
-            // every routine "still fine" poll.
-            hmi_set_message(String("Printer Ready"), MSG_SEV_INFO, true);
-        }
+        hmi_condition_clear(HMI_COND_PRINTER);
     }
 
-    if (system_state == SYS_INSPECTION_WINDOW)
-    {
-        if (active && !was_active && !window_paused_for_printer)
-        {
-            window_paused_for_printer = true;
-            window_pause_start_ms = millis();
-            Serial.println("Inspection window PAUSED - printer fault");
-        }
-        else if (!active && was_active && window_paused_for_printer)
-        {
-            window_pause_accum_ms += millis() - window_pause_start_ms;
-            window_paused_for_printer = false;
-            Serial.println("Inspection window RESUMED - printer OK");
-        }
-    }
+    window_paused_for_printer = active;
+    window_pause_recompute();
 }
 
 void printer_init()
@@ -192,7 +179,7 @@ void send_to_printer(const char *label)
     if (!build_tspl_qr_job(label, job_buf, sizeof(job_buf), job_len))
     {
         Serial.println("PRINT FAILED: TSPL build error");
-        hmi_set_message(String("Print Build Error"), MSG_SEV_FAULT, true);
+        hmi_condition_set(HMI_COND_PRINTER, String("Print Build Error"), HMI_SEV_PRINTER);
         return;
     }
 
