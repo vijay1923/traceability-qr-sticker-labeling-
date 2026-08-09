@@ -17,11 +17,6 @@ per shift, and displays live status on a DWIN HMI touchscreen.
 
 ## Firmware architecture
 
-Single `.ino` sketch split into header-only modules (no `.cpp` files — every function/global
-is defined once and only ever included into one translation unit, so plain `#ifndef` guards
-are sufficient without `inline`). `main.ino` includes every module and contains only
-`setup()`/`loop()`.
-
 ```mermaid
 graph TD
     main[main.ino]
