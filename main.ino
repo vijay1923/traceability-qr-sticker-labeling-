@@ -156,14 +156,13 @@ void setup()
     {
         Serial.println("Scanner Connected");
         RGB_setColor(green); // ready
-        hmi_write_text((uint16_t)SCANNER_STATUS, String("Connected"));
     }
     else
     {
         Serial.println("Scanner disconnected");
         RGB_setColor(red); // not ready
-        hmi_write_text((uint16_t)SCANNER_STATUS, String("Disconnected"));
     }
+    set_scanner_fault(!barcode_status);
     printer_status_t boot_printer_status = PRINTER_STATUS_OTHER_ERROR;
     bool boot_printer_ok = poll_printer_status(boot_printer_status);
     bool boot_printer_fault = !(boot_printer_ok && boot_printer_status == PRINTER_STATUS_NORMAL);
@@ -187,6 +186,10 @@ void setup()
 
 void loop()
 {
+    // Expire any transient HMI conditions (e.g. cavity-limit reject message)
+    // whose display duration has elapsed, and repaint MESSAGE if needed.
+    hmi_condition_service();
+
     // Engineer commands over Serial - see command_console.h / "help" for full list.
     // Robust against any terminal line-ending setting: normally triggers on
     // '\r' or '\n', but if neither ever arrives, an idle timeout (200ms of
@@ -289,13 +292,12 @@ void loop()
         if (barcode_status)
         {
             Serial.println("Scanner Connected");
-            hmi_write_text((uint16_t)SCANNER_STATUS, String("Connected"));
         }
         else
         {
             Serial.println("Scanner disconnected");
-            hmi_write_text((uint16_t)SCANNER_STATUS, String("Disconnected"));
         }
+        set_scanner_fault(!barcode_status);
 
         lastConnectedState = barcode_status;
         if (!flashing)
@@ -311,47 +313,16 @@ void loop()
     }
 
     // INSPECTION_WINDOW -> CYCLE_TIME (fixed duration, no early close, no
-    // extension - EXCEPT time spent paused for a printer fault doesn't
-    // count: window_pause_accum_ms is subtracted from elapsed time, and the
-    // close check is skipped entirely while still actively paused, so a
-    // printer outage can't burn cavities into NG just because the clock
-    // kept running while nothing could be printed.)
-    if (system_state == SYS_INSPECTION_WINDOW && !window_paused_for_printer &&
+    // extension - EXCEPT time spent paused for a printer or scanner fault
+    // doesn't count: window_pause_accum_ms is subtracted from elapsed time,
+    // and the close check is skipped entirely while still actively paused,
+    // so an outage can't burn cavities into NG just because the clock kept
+    // running while nothing could be scanned/printed. A cavity-limit early
+    // close happens separately, immediately, in production_manager.h.)
+    if (system_state == SYS_INSPECTION_WINDOW && !window_currently_paused &&
         (millis() - state_start_ms - window_pause_accum_ms) >= ((unsigned long)g_inspection_window_s * 1000UL))
     {
-        uint8_t ok = printed_count;
-        uint8_t ng = (g_cavity_count > printed_count) ? (g_cavity_count - printed_count) : 0;
-
-        shift_ok_total += ok;
-        shift_ng_total += ng;
-        hmi_write_text((uint16_t)STICKER, String(shift_ok_total));
-        Serial.print("Shift Totals -> OK: ");
-        Serial.println(shift_ok_total);
-    
-#if ENABLE_OK_NG_SUMMARY
-        Serial.print("Window Summary -> OK: ");
-        Serial.print(ok);
-        Serial.print(" NG: ");
-        Serial.print(ng);
-        Serial.print(" (Cavity: ");
-        Serial.print(g_cavity_count);
-        Serial.println(")");
-#endif
-
-        // Checkpoint the running shift totals to flash right after folding
-        // this window's counts in, so a power loss any time before the next
-        // window close only costs this one window, not the shift.
-        write_checkpoint();
-
-        // Apply any shift-boundary rollover that was deferred while this
-        // window was open, now that its counts are safely folded in.
-        if (shift_rollover_pending)
-        {
-            apply_shift_rollover(pending_shift, pending_day, pending_month, pending_year);
-            shift_rollover_pending = false;
-        }
-
-        enter_state(SYS_CYCLE_TIME);
+        close_inspection_window();
     }
 
     // CYCLE_TIME -> INSPECTION_WINDOW (automatic, no scan needed)
@@ -362,15 +333,13 @@ void loop()
 
         // This transition happens on a timer, not a scan, so unlike the
         // scan-triggered WAIT_FOR_START->INSPECTION_WINDOW path (which is
-        // always preceded by a fresh Gate #0/#2 printer check), the printer
-        // could already be faulty right as this window opens. Start it
-        // paused immediately instead of waiting for the next poll to notice.
-        if (printer_fault_active)
-        {
-            window_paused_for_printer = true;
-            window_pause_start_ms = millis();
-            Serial.println("Inspection window PAUSED - printer fault (already faulty at window open)");
-        }
+        // always preceded by a fresh Gate #0/#2 printer check), a fault
+        // could already be active right as this window opens. enter_state()
+        // already calls window_pause_recompute() itself using whatever
+        // window_paused_for_printer/window_paused_for_scanner currently are,
+        // so no extra handling is needed here - this comment just documents
+        // why that call exists inside enter_state() rather than duplicating
+        // fault-check logic at every place a window can open.
     }
 
     // Periodic, wall-clock-driven shift rollover check - independent of
