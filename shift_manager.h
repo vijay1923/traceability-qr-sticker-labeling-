@@ -378,4 +378,46 @@ void apply_shift_rollover(char new_shift, uint8_t day, uint8_t month, uint16_t y
     write_checkpoint(); // persist the freshly-reset totals for the new shift
 }
 
+// Closes the current INSPECTION_WINDOW: folds this window's OK/NG into the
+// running shift totals, checkpoints, applies any deferred shift rollover,
+// and transitions to CYCLE_TIME. Shared by two call sites that both need
+// identical handling - the normal timer-based close in loop(), and an early
+// close the moment printed_count reaches the cavity limit (production_manager.h).
+void close_inspection_window()
+{
+    uint8_t ok = printed_count;
+    uint8_t ng = (g_cavity_count > printed_count) ? (g_cavity_count - printed_count) : 0;
+
+    shift_ok_total += ok;
+    shift_ng_total += ng;
+    hmi_write_text((uint16_t)STICKER, String(shift_ok_total));
+    Serial.print("Shift Totals -> OK: ");
+    Serial.println(shift_ok_total);
+
+#if ENABLE_OK_NG_SUMMARY
+    Serial.print("Window Summary -> OK: ");
+    Serial.print(ok);
+    Serial.print(" NG: ");
+    Serial.print(ng);
+    Serial.print(" (Cavity: ");
+    Serial.print(g_cavity_count);
+    Serial.println(")");
+#endif
+
+    // Checkpoint the running shift totals to flash right after folding this
+    // window's counts in, so a power loss any time before the next window
+    // close only costs this one window, not the shift.
+    write_checkpoint();
+
+    // Apply any shift-boundary rollover that was deferred while this window
+    // was open, now that its counts are safely folded in.
+    if (shift_rollover_pending)
+    {
+        apply_shift_rollover(pending_shift, pending_day, pending_month, pending_year);
+        shift_rollover_pending = false;
+    }
+
+    enter_state(SYS_CYCLE_TIME);
+}
+
 #endif
