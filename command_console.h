@@ -217,6 +217,43 @@ void process_serial_line(char *raw_line, uint8_t raw_len)
             Serial.println("ERR - usage: hmiwrite <vp_hex> <number>   e.g. hmiwrite 5500 1234");
         }
     }
+    else if (strncmp(raw_line, "print ", 6) == 0)
+    {
+        const char *data = raw_line + 6;
+        while (*data == ' ' || *data == '\t')
+        {
+            data++;
+        }
+
+        if (*data == '\0')
+        {
+            Serial.println("ERR - usage: print <data>   e.g. print 123");
+        }
+        else
+        {
+            printer_status_t pre_status = PRINTER_STATUS_OTHER_ERROR;
+            bool pre_ok = poll_printer_status(pre_status);
+
+            if (!pre_ok || pre_status != PRINTER_STATUS_NORMAL)
+            {
+                Serial.print("ERR - printer not ready before manual print. Status: ");
+                Serial.println(pre_ok ? printer_status_to_text(pre_status) : "NO RESPONSE");
+                set_printer_fault(true, pre_status, pre_ok);
+            }
+            else
+            {
+                if (printer_fault_active)
+                {
+                    set_printer_fault(false, pre_status, pre_ok);
+                }
+
+                hmi_write_text((uint16_t)QR_CODE, String(data));
+                send_to_printer(data);
+                Serial.print("OK - manual QR print sent: ");
+                Serial.println(data);
+            }
+        }
+    }
     else if (strcmp(raw_line, "hmihelp") == 0)
     {
         hmi_test_help();
@@ -237,6 +274,7 @@ void process_serial_line(char *raw_line, uint8_t raw_len)
         Serial.println("  resetdata                     -> shows warning; requires 'resetdata CONFIRM' to actually wipe /stats");
         Serial.println("  hmitext <vp_hex> <text>       -> write text to a VP address (calibration: identify which VP is which)");
         Serial.println("  hmiwrite <vp_hex> <number>    -> write a number to a VP address (calibration)");
+        Serial.println("  print <data>                  -> generate and send a QR label for manual data");
         Serial.println("  hmihelp                       -> show HMI-focused help");
         Serial.println("  verbose on|off                -> toggle extra diagnostic logging");
         Serial.println("  uptime                        -> show time since boot");
