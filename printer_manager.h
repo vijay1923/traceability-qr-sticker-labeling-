@@ -137,6 +137,17 @@ bool build_tspl_qr_job(const char *qr_data, char *out_buf, size_t out_buf_size, 
         "PRINT 1,1\r\n",
         qr_data);
 
+            
+      // SIZE 4,3  // inch 
+      // GAP 0,0 // inch 
+      // DIRECTION 1 
+      // CLS 
+      // DMATRIX 10,110,400,400, "DMATRIX EXAMPLE 1" 
+      // DMATRIX 310,110,400,400,x6, "DMATRIX EXAMPLE 2" 
+      // DMATRIX 10,310,400,400,x8,18,18, "DMATRIX EXAMPLE 3" 
+      // PRINT 1,1 
+
+
     if (n <= 0 || (size_t)n >= out_buf_size)
     {
         return false;
