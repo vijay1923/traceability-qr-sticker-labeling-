@@ -40,6 +40,7 @@ extern dwindisplay hmi;
 typedef enum
 {
     HMI_COND_ROUTINE = 0,  // normal state text - always active, lowest severity, the fallback
+    HMI_COND_CONFIG,       // transient config-QR confirmation/error - auto-expires, see config_manager.cpp
     HMI_COND_REJECT,       // transient scan rejection (cavity limit etc.) - auto-expires
     HMI_COND_SCANNER,      // scanner disconnected - persists until reconnect
     HMI_COND_PRINTER,      // printer fault - persists until cleared
@@ -47,9 +48,10 @@ typedef enum
 } hmi_condition_id_t;
 
 #define HMI_SEV_ROUTINE  0
-#define HMI_SEV_REJECT   1
-#define HMI_SEV_SCANNER  2
-#define HMI_SEV_PRINTER  3
+#define HMI_SEV_CONFIG   1
+#define HMI_SEV_REJECT   2
+#define HMI_SEV_SCANNER  3
+#define HMI_SEV_PRINTER  4
 
 // Buzzer only fires for conditions at/above this severity - the two faults
 // that actually stop production (printer, scanner), not routine text or

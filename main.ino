@@ -216,6 +216,12 @@ void loop()
     // whose display duration has elapsed, and repaint MESSAGE if needed.
     hmi_condition_service();
 
+    // Advances the queued config-QR confirmation/error messages (see
+    // config_manager.cpp) - separate from hmi_condition_service() above
+    // because that only clears an expired slot, it doesn't know to load the
+    // *next* queued message into the same slot.
+    config_confirm_service();
+
     // Engineer commands over Serial - see command_console.h / "help" for full list.
     // Robust against any terminal line-ending setting: normally triggers on
     // '\r' or '\n', but if neither ever arrives, an idle timeout (200ms of

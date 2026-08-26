@@ -36,4 +36,10 @@ void parse_config_barcode(const char *payload);
 
 void reset_config_to_defaults();
 
+// Call periodically from loop() (alongside hmi_condition_service()) to
+// advance the queued config-confirmation messages parse_config_barcode()
+// builds - see config_manager.cpp for why this is a queue rather than a
+// single hmi_condition_set() call.
+void config_confirm_service();
+
 #endif
