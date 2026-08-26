@@ -47,7 +47,7 @@ void process_serial_line(char *raw_line, uint8_t raw_len)
             }
             else
             {
-                current_shift = compute_shift((uint8_t)h);
+                current_shift = compute_shift((uint8_t)h, (uint8_t)mi);
                 Serial.print("OK - RTC time set and verified: ");
                 Serial.print(rb_year); Serial.print("-");
                 Serial.print(rb_month); Serial.print("-");
@@ -103,14 +103,41 @@ void process_serial_line(char *raw_line, uint8_t raw_len)
     {
         char key_buf[16];
         long value;
-        if (sscanf(raw_line + 10, "%15s %ld", key_buf, &value) == 2)
+        bool parsed = false;
+
+        // shift_a / shift_b accept "HH:MM" (odd shift start times, e.g. 07:30),
+        // falling back to a bare hour ("7" -> 07:00) for backward compatibility.
+        int hh, mm;
+        if (sscanf(raw_line + 10, "%15s %d:%d", key_buf, &hh, &mm) == 3 &&
+            (strcmp(key_buf, "shift_a") == 0 || strcmp(key_buf, "shift_b") == 0))
+        {
+            value = (long)hh * 60 + mm;
+            parsed = true;
+        }
+        else if (sscanf(raw_line + 10, "%15s %ld", key_buf, &value) == 2)
+        {
+            if (strcmp(key_buf, "shift_a") == 0 || strcmp(key_buf, "shift_b") == 0)
+                value *= 60; // bare hour -> minutes-since-midnight
+            parsed = true;
+        }
+
+        if (parsed)
         {
             if (set_config_value(key_buf, value))
             {
                 Serial.print("OK - ");
                 Serial.print(key_buf);
                 Serial.print(" set to ");
-                Serial.println(value);
+                if (strcmp(key_buf, "shift_a") == 0 || strcmp(key_buf, "shift_b") == 0)
+                {
+                    char hhmm[6];
+                    snprintf(hhmm, sizeof(hhmm), "%02ld:%02ld", value / 60, value % 60);
+                    Serial.println(hhmm);
+                }
+                else
+                {
+                    Serial.println(value);
+                }
 
                 if (strcmp(key_buf, "cavity") == 0)
                 {
@@ -279,7 +306,7 @@ void process_serial_line(char *raw_line, uint8_t raw_len)
         Serial.println("  getfile <filename>            -> retrieve a file in /stats (example: getfile 0826.csv)");
         Serial.println("  stats                         -> show current (not-yet-finalized) shift totals");
         Serial.println("  config                        -> show current runtime configuration");
-        Serial.println("  setconfig <key> <value>       -> change + persist one config value (keys: cycletime, inspwindow, cavity, shift_a, shift_b)");
+        Serial.println("  setconfig <key> <value>       -> change + persist one config value (keys: cycletime, inspwindow, cavity, shift_a, shift_b; shift_a/shift_b accept HH:MM, e.g. 7:30)");
         Serial.println("  resetconfig                   -> reset config to compiled-in defaults");
         Serial.println("  version                       -> show firmware version and build date");
         Serial.println("  resetdata                     -> shows warning; requires 'resetdata CONFIRM' to actually wipe /stats");
