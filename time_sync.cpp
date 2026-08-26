@@ -106,7 +106,7 @@ void do_timesync()
                 Serial.print(rb_day); Serial.print(" ");
                 Serial.print(rb_hour); Serial.print(":");
                 Serial.println(rb_minute);
-                current_shift = compute_shift(rb_hour);
+                current_shift = compute_shift(rb_hour, rb_minute);
             }
         }
     }
