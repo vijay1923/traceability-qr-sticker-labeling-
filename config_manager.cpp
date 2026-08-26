@@ -4,8 +4,8 @@
 uint32_t g_cycle_time_s        = CYCLE_TIME_S;
 uint32_t g_inspection_window_s = INSPECTION_WINDOW_S;
 uint8_t  g_cavity_count        = CAVITY_COUNT;
-uint8_t  g_shift_a_hour        = SHIFT_A_START_HOUR;
-uint8_t  g_shift_b_hour        = SHIFT_B_START_HOUR;
+uint16_t g_shift_a_min         = SHIFT_A_START_MIN;
+uint16_t g_shift_b_min         = SHIFT_B_START_MIN;
 Preferences cfg_prefs;
 
 void load_config_from_nvs()
@@ -13,18 +13,26 @@ void load_config_from_nvs()
     g_cycle_time_s        = cfg_prefs.getUInt("cycle_s", CYCLE_TIME_S);
     g_inspection_window_s = cfg_prefs.getUInt("insp_s", INSPECTION_WINDOW_S);
     g_cavity_count        = (uint8_t)cfg_prefs.getUInt("cavity", CAVITY_COUNT);
-    g_shift_a_hour        = (uint8_t)cfg_prefs.getUInt("shift_a", SHIFT_A_START_HOUR);
-    g_shift_b_hour        = (uint8_t)cfg_prefs.getUInt("shift_b", SHIFT_B_START_HOUR);
+    g_shift_a_min         = (uint16_t)cfg_prefs.getUInt("shift_a_m", SHIFT_A_START_MIN);
+    g_shift_b_min         = (uint16_t)cfg_prefs.getUInt("shift_b_m", SHIFT_B_START_MIN);
+}
+
+static void format_hhmm(uint16_t minutes_of_day, char out[6])
+{
+    snprintf(out, 6, "%02u:%02u", (unsigned)(minutes_of_day / 60), (unsigned)(minutes_of_day % 60));
 }
 
 void print_config()
 {
+    char hhmm[6];
     Serial.println("---- Configuration ----");
     Serial.print("  cycletime   = "); Serial.print(g_cycle_time_s); Serial.println(" s");
     Serial.print("  inspwindow  = "); Serial.print(g_inspection_window_s); Serial.println(" s");
     Serial.print("  cavity      = "); Serial.println(g_cavity_count);
-    Serial.print("  shift_a     = "); Serial.println(g_shift_a_hour);
-    Serial.print("  shift_b     = "); Serial.println(g_shift_b_hour);
+    format_hhmm(g_shift_a_min, hhmm);
+    Serial.print("  shift_a     = "); Serial.println(hhmm);
+    format_hhmm(g_shift_b_min, hhmm);
+    Serial.print("  shift_b     = "); Serial.println(hhmm);
     Serial.println("------------------------");
 }
 
@@ -53,16 +61,16 @@ bool set_config_value(const char *key, long value)
     }
     if (strcmp(key, "shift_a") == 0)
     {
-        if (value < 0 || value > 23) return false;
-        g_shift_a_hour = (uint8_t)value;
-        cfg_prefs.putUInt("shift_a", g_shift_a_hour);
+        if (value < 0 || value > 1439) return false; // minutes-since-midnight, 0..23:59
+        g_shift_a_min = (uint16_t)value;
+        cfg_prefs.putUInt("shift_a_m", g_shift_a_min);
         return true;
     }
     if (strcmp(key, "shift_b") == 0)
     {
-        if (value < 0 || value > 23) return false;
-        g_shift_b_hour = (uint8_t)value;
-        cfg_prefs.putUInt("shift_b", g_shift_b_hour);
+        if (value < 0 || value > 1439) return false;
+        g_shift_b_min = (uint16_t)value;
+        cfg_prefs.putUInt("shift_b_m", g_shift_b_min);
         return true;
     }
 
@@ -120,7 +128,7 @@ void parse_config_barcode(const char *payload)
                     Serial.print(" = ");
                     Serial.println(store_val);
                     if (strcmp(internal_key, "cavity") == 0)
-                        hmi.Write_UString((uint16_t)MOLD_CAVITY, String(g_cavity_count));
+                    hmi.Write_UString((uint16_t)MOLD_CAVITY, String(g_cavity_count));
                     any_ok = true;
                 }
                 else
@@ -143,7 +151,7 @@ void reset_config_to_defaults()
     g_cycle_time_s        = CYCLE_TIME_S;
     g_inspection_window_s = INSPECTION_WINDOW_S;
     g_cavity_count        = CAVITY_COUNT;
-    g_shift_a_hour        = SHIFT_A_START_HOUR;
-    g_shift_b_hour        = SHIFT_B_START_HOUR;
+    g_shift_a_min         = SHIFT_A_START_MIN;
+    g_shift_b_min         = SHIFT_B_START_MIN;
     Serial.println("OK - config reset to compiled-in defaults");
 }

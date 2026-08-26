@@ -1,57 +1,34 @@
 #ifndef RGB_STATUS_H
 #define RGB_STATUS_H
 
+#include <Arduino.h>
 #include <Adafruit_NeoPixel.h>
 #include "config.h"
 
-Adafruit_NeoPixel RGB(1, RGB_LED_PIN, NEO_GRB + NEO_KHZ800);
+// barcode_status is defined (not just declared) directly inside
+// usb_scanner_Lib.h - that header has NO include guard, so it's only ever
+// #include'd once in the whole project (main.ino). Re-including it here
+// would redefine everything in it a second time and fail to compile.
+// Declaring just the one symbol this file actually needs avoids that.
+extern uint8_t barcode_status; // used by base_color() below
 
-uint32_t red;
-uint32_t green;
-uint32_t blue;
-uint32_t yellow;
-uint32_t cyan;
-uint32_t magenta;
-uint32_t white;
-uint32_t orange;
+extern Adafruit_NeoPixel RGB;
 
-bool flashing = false;
-unsigned long flash_start_ms = 0;
+extern uint32_t red;
+extern uint32_t green;
+extern uint32_t blue;
+extern uint32_t yellow;
+extern uint32_t cyan;
+extern uint32_t magenta;
+extern uint32_t white;
+extern uint32_t orange;
 
-void RGB_init()
-{
-    RGB.begin();
-    RGB.setBrightness(255);
+extern bool flashing;
+extern unsigned long flash_start_ms;
 
-    red   = RGB.Color(255, 0, 0);
-    green = RGB.Color(0, 255, 0);
-    blue  = RGB.Color(0, 0, 255);
-    yellow = RGB.Color(255, 255, 0);
-    cyan = RGB.Color(0, 255, 255);
-    magenta = RGB.Color(255, 0, 255);
-    white = RGB.Color(255, 255, 255);
-    orange = RGB.Color(255, 140, 0);
-
-    RGB.clear();
-    RGB.show();
-}
-
-void RGB_setColor(uint32_t color)
-{
-    RGB.setPixelColor(0, color);
-    RGB.show();
-}
-
-uint32_t base_color()
-{
-    return barcode_status ? green : red;
-}
-
-void RGB_flash(uint32_t color)
-{
-    RGB_setColor(color);
-    flashing = true;
-    flash_start_ms = millis();
-}
+void RGB_init();
+void RGB_setColor(uint32_t color);
+uint32_t base_color();
+void RGB_flash(uint32_t color);
 
 #endif

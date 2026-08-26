@@ -10,13 +10,15 @@ typedef enum
 {
     SYS_WAIT_FOR_START,
     SYS_INSPECTION_WINDOW,
-    SYS_CYCLE_TIME
+    SYS_CYCLE_TIME,
+    SYS_ERROR   // printer and/or scanner fault - production blocked until cleared
 } system_state_t;
 
-system_state_t system_state = SYS_WAIT_FOR_START;
-unsigned long state_start_ms = 0;
+// Defined in state_machine.cpp.
+extern system_state_t system_state;
+extern unsigned long state_start_ms;
 
-uint8_t printed_count = 0; // resets each time INSPECTION_WINDOW opens, used for OK/NG summary
+extern uint8_t printed_count; // resets each time INSPECTION_WINDOW opens, used for OK/NG summary
 
 // ---- INSPECTION_WINDOW pause tracking ----
 // Either a printer fault or a scanner disconnect should pause the window
@@ -27,65 +29,21 @@ uint8_t printed_count = 0; // resets each time INSPECTION_WINDOW opens, used for
 // correctly: the pause starts on the FIRST fault to appear and only actually
 // resumes once BOTH have cleared, with total paused time accumulated across
 // the whole combined period regardless of which flag(s) caused it.
-unsigned long window_pause_accum_ms = 0;   // total ms this window has spent paused
-unsigned long window_pause_start_ms = 0;   // millis() when the current pause began
-bool window_paused_for_printer = false;
-bool window_paused_for_scanner = false;
-bool window_currently_paused = false;
+extern unsigned long window_pause_accum_ms;   // total ms this window has spent paused
+extern bool window_paused_for_printer;
+extern bool window_paused_for_scanner;
+extern bool window_currently_paused;
 
 // Call this after changing window_paused_for_printer or window_paused_for_scanner.
-void window_pause_recompute()
-{
-    bool should_pause = (window_paused_for_printer || window_paused_for_scanner)
-                         && (system_state == SYS_INSPECTION_WINDOW);
-
-    if (should_pause && !window_currently_paused)
-    {
-        window_currently_paused = true;
-        window_pause_start_ms = millis();
-        Serial.println("Inspection window PAUSED");
-    }
-    else if (!should_pause && window_currently_paused)
-    {
-        window_pause_accum_ms += millis() - window_pause_start_ms;
-        window_currently_paused = false;
-        Serial.println("Inspection window RESUMED");
-    }
-}
+void window_pause_recompute();
 // --------------------------------------------------------------------------
 
-void enter_state(system_state_t new_state)
-{
-    system_state = new_state;
-    state_start_ms = millis();
+void enter_state(system_state_t new_state);
 
-    switch (new_state)
-    {
-        case SYS_WAIT_FOR_START:
-            Serial.println("STATE -> WAIT_FOR_START (waiting for first scan to synchronize)");
-            hmi_condition_set(HMI_COND_ROUTINE, String("Waiting for first scan"), HMI_SEV_ROUTINE);
-            break;
-
-        case SYS_INSPECTION_WINDOW:
-            printed_count = 0;
-            window_pause_accum_ms = 0;
-            window_currently_paused = false;
-            Serial.println("STATE -> INSPECTION_WINDOW (scan/print allowed)");
-            hmi_condition_set(HMI_COND_ROUTINE, String("Inspection Window Open"), HMI_SEV_ROUTINE);
-            hmi_write_text((uint16_t)PRINT_COUNTER, String(0));
-
-            // A fault may already be active right as this window opens (e.g.
-            // opened automatically on a timer, not preceded by a fresh scan
-            // that would have gone through Gate #0/#2). Start paused
-            // immediately instead of waiting for the next poll to notice.
-            window_pause_recompute();
-            break;
-
-        case SYS_CYCLE_TIME:
-            Serial.println("STATE -> CYCLE_TIME (printing blocked)");
-            hmi_condition_set(HMI_COND_ROUTINE, String("Cycle Running"), HMI_SEV_ROUTINE);
-            break;
-    }
-}
+// Call after a printer or scanner fault flag changes - moves system_state
+// between WAIT_FOR_START and ERROR to reflect whether a fault is active.
+// No-op while INSPECTION_WINDOW/CYCLE_TIME are running (those handle faults
+// via the window-pause mechanism above instead).
+void system_fault_recompute();
 
 #endif

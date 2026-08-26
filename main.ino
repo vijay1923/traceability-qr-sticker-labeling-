@@ -14,6 +14,8 @@
 #include "production_manager.h"
 #include "command_console.h"
 #include "hmi.h"
+#include "watchdog.h"
+#include "web_portal.h"
 
 void setup()
 {
@@ -24,6 +26,7 @@ void setup()
     RGB_init();
     usb_scannerInit();
     set_barcode_callback(onBarcodeScanned);
+    delay(500); 
     rtc_init();
     printer_init();
     hmi_init();
@@ -31,6 +34,7 @@ void setup()
     boot_millis_ref = millis();
     cfg_prefs.begin("cfg", false);
     load_config_from_nvs();
+   // wifi_creds_load();
     bool rtc_valid_at_boot = false;
     uint8_t boot_day = 0, boot_month = 0, boot_hour = 0, boot_minute = 0;
     uint16_t boot_year = 0;
@@ -46,7 +50,7 @@ void setup()
             Serial.print(boot_day); Serial.print(" ");
             Serial.print(boot_hour); Serial.print(":");
             Serial.println(boot_minute);
-            current_shift = compute_shift(boot_hour);
+            current_shift = compute_shift(boot_hour, boot_minute);
         }
         hmi.Time_Stamp(boot_day, boot_month, (uint8_t)(boot_year % 100), boot_hour, boot_minute, 0);
     }
@@ -68,7 +72,7 @@ void setup()
         // setting in the Arduino IDE (or a custom partitions.csv), not a
         // code bug. Firmware continues running with stats/checkpoint
         // persistence disabled rather than getting stuck.
-        Serial.println("ERR - LittleFShmi_write_text mount failed (no 'spiffs'-labeled partition found, or it needs formatting).");
+        Serial.println("ERR - LittleFS mount failed (no 'spiffs'-labeled partition found, or it needs formatting).");
         Serial.println("      Fix: Arduino IDE -> Tools -> Partition Scheme -> pick a scheme with SPIFFS/data space, then re-upload.");
         Serial.println("      Continuing WITHOUT persistent shift stats until this is fixed.");
     }
@@ -150,7 +154,7 @@ void setup()
     // immediately after shift_ok_total is resolved above (resumed from
     // checkpoint, reset for a new shift, or defaulted to 0 if LittleFS isn't
     // mounted) - covers every boot case, never blank, never waiting on a scan.
-    hmi_write_text((uint16_t)STICKER, String(shift_ok_total));
+    hmi.Write_UString((uint16_t)STICKER, String(shift_ok_total));
 
     if (barcode_status)
     {
@@ -181,11 +185,33 @@ void setup()
         last_logged_printer_status = boot_printer_status;
     }
 
-    enter_state(SYS_WAIT_FOR_START);  // wait for first scan to synchronize
+    // Armed here, not earlier: LittleFS.begin(true) above can legitimately
+    // take several seconds formatting on a first boot / corrupt filesystem,
+    // which could exceed WATCHDOG_TIMEOUT_S and cause a spurious reset loop
+    // if the watchdog were already running during that step.
+    watchdog_init();
+
+    // set_scanner_fault()/set_printer_fault() above already called
+    // system_fault_recompute(), which latches system_state into SYS_ERROR
+    // here if a fault was already present at boot - don't stomp that back
+    // to WAIT_FOR_START.
+    if (system_state != SYS_ERROR)
+    {
+        enter_state(SYS_WAIT_FOR_START);  // wait for first scan to synchronize
+    }
 }
 
 void loop()
 {
+    // Must run first, every pass - see watchdog.h for why this must not be
+    // moved inside any blocking wait.
+    watchdog_feed();
+
+    // Services the web portal: handles any pending HTTP request
+    // (WebServer.h is synchronous - this must run every pass or the portal
+    // won't respond to anything). No-op instantly if the portal isn't running.
+    webportal_service();
+
     // Expire any transient HMI conditions (e.g. cavity-limit reject message)
     // whose display duration has elapsed, and repaint MESSAGE if needed.
     hmi_condition_service();
@@ -227,14 +253,27 @@ void loop()
     // Poll faster while a fault is active, so recovery (and the paused
     // window resuming) is noticed as soon as possible instead of waiting
     // out the full normal interval.
+    //
+    // Non-blocking: kick off a poll when the interval elapses, then let
+    // bg_poll_printer_status_service() pick up the reply (or timeout) on a
+    // later pass. This is the poll that runs every cycle, forever, so it's
+    // the one that actually needed to stop spending up to
+    // PRINTER_REPLY_TIMEOUT_MS blocking loop() on every single pass - see
+    // watchdog.h / printer_manager.h comments for the reasoning. The
+    // boot-time check, the console "printer status" command, and the
+    // pre/post-print checks are unchanged and still block briefly - those
+    // are one-off, user- or scan-triggered, not a per-pass background cost.
     unsigned long current_poll_interval = printer_fault_active ? PRINTER_FAULT_POLL_INTERVAL_MS : PRINTER_POLL_INTERVAL_MS;
-    if (!printer_tx_busy && (millis() - last_printer_poll_ms) >= current_poll_interval)
+    if (!printer_tx_busy && bg_poll_state == BG_POLL_IDLE && (millis() - last_printer_poll_ms) >= current_poll_interval)
     {
         last_printer_poll_ms = millis();
+        bg_poll_printer_status_start();
+    }
 
-        printer_status_t printer_status = PRINTER_STATUS_OTHER_ERROR;
-        bool poll_ok = poll_printer_status(printer_status);
-
+    printer_status_t printer_status = PRINTER_STATUS_OTHER_ERROR;
+    bool poll_ok = false;
+    if (bg_poll_printer_status_service(printer_status, poll_ok))
+    {
         // Fault detection/HMI/window-pause stay on the fast internal poll
         // rate above - but Serial logging is decoupled from it: log on
         // change, otherwise repeat at most every PRINTER_LOG_HEARTBEAT_MS.
@@ -356,7 +395,7 @@ void loop()
             // Keep monthly file pre-created as month/year changes.
             sync_month_stats_file(month, year);
 
-            char shift = compute_shift(hour);
+            char shift = compute_shift(hour, minute);
             check_shift_rollover(shift, day, month, year);
         }
     }
@@ -366,7 +405,7 @@ void loop()
 
     if (last_cavity_sent != g_cavity_count)
     {
-       hmi_write_text((uint16_t)MOLD_CAVITY, String(g_cavity_count));
+       hmi.Write_UString((uint16_t)MOLD_CAVITY, String(g_cavity_count));
         last_cavity_sent = g_cavity_count;
         Serial.print("Cavity Count -> ");
         Serial.println(g_cavity_count);

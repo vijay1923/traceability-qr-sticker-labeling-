@@ -1,20 +1,22 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#define FW_VERSION      "1.1.0"
+#define FW_VERSION      "3.1.0-noauth"
 #define FW_BUILD_INFO   __DATE__ " " __TIME__
 
 // ---- Runtime-configurable defaults (see config_manager.h) ----
 // These are only the DEFAULTS used to seed NVS on first boot / after
 // "resetconfig". At runtime, the actual values used everywhere in the
 // firmware are g_cycle_time_s / g_inspection_window_s / g_cavity_count /
-// g_shift_a_hour / g_shift_b_hour, loaded from NVS in setup().
+// g_shift_a_min / g_shift_b_min, loaded from NVS in setup().
 
 #define CYCLE_TIME_S         30   // for testing
 #define INSPECTION_WINDOW_S    30   // for testing
 #define CAVITY_COUNT         8
-#define SHIFT_A_START_HOUR   7    // 07:00 morning 7 to evening 7 
-#define SHIFT_B_START_HOUR   19   // 19:00  evening 7 to morning 7
+// Shift start times as minutes-since-midnight so odd/non-hour boundaries
+// (e.g. 07:30) are supported, not just whole hours.
+#define SHIFT_A_START_MIN    (7 * 60)    // 07:00 morning 7 to evening 7
+#define SHIFT_B_START_MIN    (19 * 60)   // 19:00  evening 7 to morning 7
 // ------------------------------------------------------------------------------------
 
 #define SCL_PIN 2 // i2c rtc
@@ -61,6 +63,22 @@
 // ------------------------------------------------------------------------------------
 
 #define SHIFT_CHECK_INTERVAL_MS 1000
+
+// ---- Watchdog ----
+// Worst-case normal blocking in one loop() pass today is well under 2s
+// (printer status poll timeout PRINTER_REPLY_TIMEOUT_MS=500ms + a 512-byte
+// flush() at 9600 baud ~500ms, plus incidentals). 8s gives a wide safety
+// margin above that so it never fires during normal operation, but still
+// recovers a genuinely hung board in well under a minute unattended.
+#define WATCHDOG_TIMEOUT_S 8
+// ------------------------------------------------------------------------------------
+
+// ---- Web portal (WiFi AP + web dashboard) ----
+// No login, no session, no rate-limiting - see web_portal.cpp and
+// readme.md "Web portal" for that tradeoff. AP_SSID/AP_PASSWORD are
+// hardcoded in secrets.h, not here.
+#define WEBPORTAL_HTTP_PORT 80
+// ------------------------------------------------------------------------------------
 
 
 /// HMI Address 

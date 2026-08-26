@@ -1,18 +1,18 @@
 #ifndef PRINTER_MANAGER_H
 #define PRINTER_MANAGER_H
 
+#include <Arduino.h>
 #include <HardwareSerial.h>
 #include "config.h"
 #include "hmi.h"
 #include "state_machine.h"
 
-HardwareSerial &printer_port = Serial2;
-
-bool printer_tx_busy = false;
-unsigned long last_printer_poll_ms = 0;
-bool last_printer_response_ok = false;
-bool last_printer_status_valid = false;
-unsigned long last_printer_serial_log_ms = 0;
+// Defined in printer_manager.cpp.
+extern bool printer_tx_busy;
+extern unsigned long last_printer_poll_ms;
+extern bool last_printer_response_ok;
+extern bool last_printer_status_valid;
+extern unsigned long last_printer_serial_log_ms;
 
 typedef enum : uint8_t
 {
@@ -40,37 +40,16 @@ typedef enum : uint8_t
 
 } printer_status_t; // Printer Status Codes (from TSPL command set)
 
-printer_status_t last_logged_printer_status = PRINTER_STATUS_OTHER_ERROR;
+extern printer_status_t last_logged_printer_status;
 
 // Set by set_printer_fault() (below). When true, the printer is either not
 // responding or reporting a non-NORMAL status - onBarcodeScanned() checks
 // this FIRST and rejects the scan immediately, before doing any other work,
 // so a known-bad printer blocks the whole cycle, not just the print step.
-bool printer_fault_active = false;
-printer_status_t printer_fault_status = PRINTER_STATUS_NORMAL; // meaningless while printer_fault_active == false
+extern bool printer_fault_active;
+extern printer_status_t printer_fault_status; // meaningless while printer_fault_active == false
 
-const char *printer_status_to_text(printer_status_t status)
-{
-    switch (status)
-    {
-        case PRINTER_STATUS_NORMAL: return "NORMAL";
-        case PRINTER_STATUS_HEAD_OPEN: return "HEAD_OPEN";
-        case PRINTER_STATUS_PAPER_JAM: return "PAPER_JAM";
-        case PRINTER_STATUS_PAPER_JAM_HEAD_OPEN: return "PAPER_JAM_HEAD_OPEN";
-        case PRINTER_STATUS_OUT_OF_PAPER: return "OUT_OF_PAPER";
-        case PRINTER_STATUS_OUT_OF_PAPER_HEAD_OPEN: return "OUT_OF_PAPER_HEAD_OPEN";
-        case PRINTER_STATUS_OUT_OF_RIBBON: return "OUT_OF_RIBBON";
-        case PRINTER_STATUS_OUT_OF_RIBBON_HEAD_OPEN: return "OUT_OF_RIBBON_HEAD_OPEN";
-        case PRINTER_STATUS_OUT_OF_RIBBON_PAPER_JAM: return "OUT_OF_RIBBON_PAPER_JAM";
-        case PRINTER_STATUS_OUT_OF_RIBBON_PAPER_JAM_HEAD_OPEN: return "OUT_OF_RIBBON_PAPER_JAM_HEAD_OPEN";
-        case PRINTER_STATUS_OUT_OF_RIBBON_OUT_OF_PAPER: return "OUT_OF_RIBBON_OUT_OF_PAPER";
-        case PRINTER_STATUS_OUT_OF_RIBBON_OUT_OF_PAPER_HEAD_OPEN: return "OUT_OF_RIBBON_OUT_OF_PAPER_HEAD_OPEN";
-        case PRINTER_STATUS_PAUSED: return "PAUSED";
-        case PRINTER_STATUS_PRINTING: return "PRINTING";
-        case PRINTER_STATUS_OTHER_ERROR: return "OTHER_ERROR";
-        default: return "UNKNOWN_COMPOSITE_STATUS";
-    }
-}
+const char *printer_status_to_text(printer_status_t status);
 
 // Central place to raise or clear a printer fault. Every call site that
 // discovers a printer problem (the periodic background poll, the pre-print
@@ -85,124 +64,43 @@ const char *printer_status_to_text(printer_status_t status)
 //               with a bad status) - PRINTER_STATUS only ever shows
 //               Connected/Disconnected based on this; the actual fault
 //               detail (jam, out of paper, etc.) goes to MESSAGE only.
-void set_printer_fault(bool active, printer_status_t status, bool responded = true)
+void set_printer_fault(bool active, printer_status_t status, bool responded = true);
+
+void printer_init();
+
+// ---- Blocking status poll ----
+// Used for the boot check, the manual "printer status" console command, and
+// the pre/post-print checks in production_manager.h - all one-off, user- or
+// scan-triggered calls where a short block is expected and acceptable. See
+// bg_poll_printer_status_start()/_service() below for the non-blocking
+// version used by the periodic background poll in loop().
+bool poll_printer_status(printer_status_t &status);
+
+// ---- Non-blocking background poll ----
+// Used only by the periodic health poll in loop() (see main.ino). The
+// background poll runs every single loop() pass forever, so it's the one
+// that actually needed to stop spending up to PRINTER_REPLY_TIMEOUT_MS
+// blocking the whole system on every cycle.
+typedef enum : uint8_t
 {
-    printer_fault_active = active;
-    printer_fault_status = active ? status : PRINTER_STATUS_NORMAL;
+    BG_POLL_IDLE = 0,
+    BG_POLL_WAITING_REPLY,
+} bg_poll_state_t;
 
-    // PRINTER_STATUS: always just Connected/Disconnected. A printer that
-    // responded with a bad status (paper jam etc.) is still physically
-    // connected - it answered us - so that's "Connected", not a fault code.
-    hmi_write_text((uint16_t)PRINTER_STATUS, String(responded ? "Connected" : "Disconnected"));
+extern bg_poll_state_t bg_poll_state;
 
-    if (active)
-    {
-        const char *status_text = responded ? printer_status_to_text(status) : "Disconnected";
-        hmi_condition_set(HMI_COND_PRINTER, String("Printer Fault: ") + status_text, HMI_SEV_PRINTER);
-    }
-    else
-    {
-        hmi_condition_clear(HMI_COND_PRINTER);
-    }
+// Call once to kick off a background poll: flushes stale RX bytes and sends
+// the status request, then returns immediately without waiting for a reply.
+// Caller (main.ino) must only call this when bg_poll_state == BG_POLL_IDLE.
+void bg_poll_printer_status_start();
 
-    window_paused_for_printer = active;
-    window_pause_recompute();
-}
+// Call every loop() pass. Returns true exactly once a result is ready
+// (reply received, or PRINTER_REPLY_TIMEOUT_MS elapsed with no reply) and
+// writes it to status/ok, leaving bg_poll_state back at BG_POLL_IDLE.
+// Returns false while still waiting, or if no poll is in flight - caller
+// should do nothing in that case.
+bool bg_poll_printer_status_service(printer_status_t &status, bool &ok);
 
-void printer_init()
-{
-    printer_port.begin(9600, SERIAL_8N1, PTR_RX, PTR_TX);  // printer initialization
-    last_printer_poll_ms = millis();
-    last_printer_response_ok = false;
-    last_printer_status_valid = false;
-    Serial.println("Printer Initialized");
-}
-
-bool build_tspl_qr_job(const char *qr_data, char *out_buf, size_t out_buf_size, size_t &out_len)
-{
-    if (qr_data == nullptr || qr_data[0] == '\0' || out_buf == nullptr || out_buf_size == 0)
-    {
-        return false;
-    }
-
-    int n = snprintf
-    (
-        out_buf,
-        out_buf_size,
-        "SIZE 16 mm,16 mm\r\n"
-        "GAP 3 mm,3 mm\r\n"
-        "DIRECTION 1\r\n"
-        "CLS\r\n"
-        "DMATRIX 15,0,128,128,x5,\"%s\"\r\n"
-        "PRINT 1,1\r\n",
-        qr_data);
-
-            
-      // SIZE 4,3  // inch 
-      // GAP 0,0 // inch 
-      // DIRECTION 1 
-      // CLS 
-      // DMATRIX 10,110,400,400, "DMATRIX EXAMPLE 1" 
-      // DMATRIX 310,110,400,400,x6, "DMATRIX EXAMPLE 2" 
-      // DMATRIX 10,310,400,400,x8,18,18, "DMATRIX EXAMPLE 3" 
-      // PRINT 1,1 
-
-
-    if (n <= 0 || (size_t)n >= out_buf_size)
-    {
-        return false;
-    }
-
-    out_len = (size_t)n;
-    return true;
-}
-
-bool poll_printer_status(printer_status_t &status)
-{
-    while (printer_port.available() > 0)
-    {
-        (void)printer_port.read();
-    }
-
-    printer_port.write(PRINTER_STATUS_CMD, sizeof(PRINTER_STATUS_CMD));
-
-    unsigned long start_ms = millis();
-    while ((millis() - start_ms) < PRINTER_REPLY_TIMEOUT_MS)
-    {
-        if (printer_port.available() > 0)
-        {
-            status = (printer_status_t)printer_port.read();
-            return true;
-        }
-    }
-
-    return false;
-}
-
-void send_to_printer(const char *label)
-{
-    Serial.print("PRINT -> ");
-    Serial.println(label);
-
-    char job_buf[512];
-    size_t job_len = 0;
-
-    if (!build_tspl_qr_job(label, job_buf, sizeof(job_buf), job_len))
-    {
-        Serial.println("PRINT FAILED: TSPL build error");
-        hmi_condition_set(HMI_COND_PRINTER, String("Print Build Error"), HMI_SEV_PRINTER);
-        return;
-    }
-
-    printer_tx_busy = true;
-    size_t bytes_sent = printer_port.write((const uint8_t *)job_buf, job_len);
-    printer_port.flush();
-    printer_tx_busy = false;
-
-    Serial.print("PRINT BYTES -> ");
-    Serial.print((unsigned)bytes_sent);
-    Serial.print("/");
-    Serial.println((unsigned)job_len);
-}
+void send_to_printer(const char *label);
 
 #endif
