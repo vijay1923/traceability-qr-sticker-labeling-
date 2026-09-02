@@ -41,6 +41,13 @@
 #define EXPECTED_DELIMITER      '*'
 #define EXPECTED_SEGMENT_COUNT  4    // e.g. 1063NRF26*1190*MB*61416 -> 4 segments, 3 delimiters
 
+// ---- Alternate scanner input format (also accepted) ----
+// e.g. "V CB 84 I@290826@2979@10" -> 4 '@'-delimited segments; the batch
+// number used as the traceability part number is the 3rd segment (index 2).
+#define NEW_FORMAT_DELIMITER            '@'
+#define NEW_FORMAT_SEGMENT_COUNT        4
+#define NEW_FORMAT_BATCH_SEGMENT_INDEX  2
+
 // ---- Cycle behavior ----
 #define ENABLE_OK_NG_SUMMARY    1    // 1 = log OK/NG summary to Serial at window close, 0 = disabled
 // ------------------------------------------------------------------------------------
